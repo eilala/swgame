@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 export default class BlasterBolt {
-    constructor(position, direction, damage = 10) {
+    constructor(position, direction, shipVelocity, damage = 10) {
         // Create the visual representation of the blaster bolt
         const geometry = new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8);
         const material = new THREE.MeshBasicMaterial({ 
@@ -10,10 +10,10 @@ export default class BlasterBolt {
         });
         
         this.mesh = new THREE.Mesh(geometry, material);
-        
+
         // Orient the cylinder to face the direction of travel
         this.mesh.quaternion.setFromUnitVectors(
-            new THREE.Vector3(0, 0, 1), // Default cylinder orientation
+            new THREE.Vector3(0, 1, 0), // Default cylinder orientation (Y-axis)
             direction.clone().normalize()
         );
         
@@ -22,15 +22,13 @@ export default class BlasterBolt {
         
         // Physics properties
         this.direction = direction.clone().normalize();
-        this.velocity = this.direction.clone().multiplyScalar(50); // Speed of 30 units per second
+        this.velocity = this.direction.clone().multiplyScalar(30).add(shipVelocity); // Speed of 30 units per second + ship velocity
         this.damage = damage;
-        this.lifetime = 2; // Bolt will be destroyed after 1 second (travels 30 units at speed 30)
+        this.lifetime = 1; // Bolt will be destroyed after 1 second (travels 30 units at speed 30)
         this.age = 0;
         
-        // Rotate the cylinder so it's aligned with the direction of travel
-        this.mesh.lookAt(
-            this.mesh.position.clone().add(this.direction)
-        );
+        // Keep the visual representation always facing forward (no additional rotation)
+        // The physics direction and visual representation are now separate
         
         // Mark the mesh as a blaster bolt for easy identification
         this.mesh.userData = this.mesh.userData || {};

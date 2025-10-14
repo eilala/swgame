@@ -34,11 +34,11 @@ export default class PrimaryWeapon {
             const firingOffset = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion).multiplyScalar(1.5);
             const firingPosition = player.position.clone().add(firingOffset);
             
-            // Calculate the direction the bolt should travel (forward from the ship)
+            // Calculate the direction the bolt should travel (forward from the ship based on ship orientation)
             const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
             
-            // Create a new blaster bolt
-            const bolt = new BlasterBolt(firingPosition, direction, this.damage);
+            // Create a new blaster bolt with ship velocity imparted to prevent 'outrunning' bullets
+            const bolt = new BlasterBolt(firingPosition, direction, player.velocity, this.damage);
             
             // Add the bolt to our array of active bolts
             this.bolts.push(bolt);
