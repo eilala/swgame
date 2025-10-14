@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import PrimaryWeapon from '../weapons/primary-weapon.js';
 
 export default class BaseShip {
     constructor() {
@@ -27,9 +28,15 @@ export default class BaseShip {
         this.drag = 0.99;
         this.boostMultiplier = 2;
         this.boosting = false;
+        
+        // Initialize the primary weapon
+        this.primaryWeapon = new PrimaryWeapon(this);
     }
 
     update(player, deltaTime) {
+        // Update the weapon system
+        this.primaryWeapon.update(deltaTime);
+        
         // Position the ship at the player's location
         this.mesh.position.copy(player.position);
 
@@ -37,5 +44,10 @@ export default class BaseShip {
         const targetQuaternion = player.quaternion;
         const step = this.turnSpeed * deltaTime;
         this.mesh.quaternion.rotateTowards(targetQuaternion, step);
+    }
+    
+    // Method to fire the primary weapon
+    firePrimaryWeapon(player) {
+        return this.primaryWeapon.fire(player);
     }
 }

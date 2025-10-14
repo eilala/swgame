@@ -20,10 +20,22 @@ export default class Controls {
 
         document.addEventListener('mousedown', (e) => {
             if (e.button === 0) {
-                console.log('Primary Weapon Fired');
+                // Primary weapon fire event
+                if (this.player.ship) {
+                    this.player.ship.isFiringPrimary = true;
+                }
             }
             if (e.button === 2) {
                 console.log('Secondary Weapon Fired');
+            }
+        });
+        
+        document.addEventListener('mouseup', (e) => {
+            if (e.button === 0) {
+                // Stop primary weapon fire event
+                if (this.player.ship) {
+                    this.player.ship.isFiringPrimary = false;
+                }
             }
         });
 

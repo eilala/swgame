@@ -72,5 +72,12 @@ export default class Player {
         // Update position
         this.position.add(this.velocity);
         this.velocity.multiplyScalar(this.ship.drag);
+        
+        // Handle primary weapon firing if the ship is set to fire
+        if (this.ship.isFiringPrimary) {
+            this.ship.firePrimaryWeapon(this);
+            // Reset the firing flag after firing once
+            this.ship.isFiringPrimary = false;
+        }
     }
 }

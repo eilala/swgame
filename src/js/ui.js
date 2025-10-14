@@ -6,6 +6,7 @@ export default class UI {
         this.createShieldOverlay();
         this.createHullOverlay();
         this.createEnergyOverlay();
+        this.createWeaponOverlay();
     }
 
     createCrosshair() {
@@ -37,6 +38,12 @@ export default class UI {
         this.energyElement.classList.add('ui-overlay', 'energy-overlay');
         document.body.appendChild(this.energyElement);
     }
+    
+    createWeaponOverlay() {
+        this.weaponElement = document.createElement('div');
+        this.weaponElement.classList.add('ui-overlay', 'weapon-overlay');
+        document.body.appendChild(this.weaponElement);
+    }
 
     update() {
         const speed = this.player.velocity.length();
@@ -50,5 +57,16 @@ export default class UI {
 
         const energy = this.player.ship.energy;
         this.energyElement.innerText = `Energy: ${energy}`;
+        
+        // Update weapon status
+        const weapon = this.player.ship.primaryWeapon;
+        if (weapon) {
+            // Calculate time until next shot is available
+            const currentTime = Date.now() / 1000;
+            const timeSinceLastShot = currentTime - weapon.lastShotTime;
+            const timeUntilNextShot = Math.max(0, weapon.fireRate - timeSinceLastShot);
+            
+            this.weaponElement.innerText = `Weapon: ${timeUntilNextShot.toFixed(2)}s until next shot`;
+        }
     }
 }
