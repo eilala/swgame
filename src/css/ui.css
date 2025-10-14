@@ -1,0 +1,37 @@
+.crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 10px;
+    height: 10px;
+    border: 1px solid white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.ui-overlay {
+    position: absolute;
+    color: white;
+    font-family: monospace;
+    font-size: 20px;
+}
+
+.speed-overlay {
+    bottom: 20px;
+    left: 20px;
+}
+
+.shield-overlay {
+    bottom: 50px;
+    right: 20px;
+}
+
+.hull-overlay {
+    bottom: 20px;
+    right: 20px;
+}
+
+.energy-overlay {
+    bottom: 80px;
+    right: 20px;
+}
