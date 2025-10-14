@@ -18,7 +18,7 @@ export default class Player {
         // Handle boost
         if (controls.keys.ShiftLeft && this.ship.energy > 0) {
             this.ship.boosting = true;
-            this.ship.energy -= 0.1; // Drain energy
+            this.ship.energy -= 6 * deltaTime; // Drain energy (6 per second)
             // Update last energy action time when using boost
             this.ship.lastEnergyActionTime = currentTime;
         } else {
@@ -43,14 +43,14 @@ export default class Player {
             const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.quaternion);
             const forwardVelocity = this.velocity.dot(forward);
             if (forwardVelocity < currentMaxSpeedForward) {
-                this.velocity.add(forward.multiplyScalar(currentAcceleration));
+                this.velocity.add(forward.multiplyScalar(currentAcceleration * deltaTime));
             }
         }
         if (controls.keys.KeyS) {
             const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.quaternion);
             const backwardVelocity = -this.velocity.dot(forward);
             if (backwardVelocity < currentMaxSpeedBackward) {
-                this.velocity.sub(forward.multiplyScalar(currentAcceleration));
+                this.velocity.sub(forward.multiplyScalar(currentAcceleration * deltaTime));
             }
         }
 
@@ -59,9 +59,9 @@ export default class Player {
         if (!this.ship.boosting && this.ship.energy < this.ship.maxEnergy) {
             // Check if we've waited long enough to start regeneration
             if (currentTime - this.ship.lastEnergyActionTime >= this.ship.energyDrainTimeout) {
-                // Regenerate energy
-                this.ship.energy += this.ship.energyRegenerationRate * deltaTime;
-                
+                // Regenerate energy (5 per second)
+                this.ship.energy += 5 * deltaTime;
+
                 // Ensure energy doesn't exceed maximum
                 if (this.ship.energy > this.ship.maxEnergy) {
                     this.ship.energy = this.ship.maxEnergy;
@@ -70,8 +70,8 @@ export default class Player {
         }
 
         // Update position
-        this.position.add(this.velocity);
-        this.velocity.multiplyScalar(this.ship.drag);
+        this.position.add(this.velocity.clone().multiplyScalar(deltaTime));
+        this.velocity.multiplyScalar(Math.pow(this.ship.drag, deltaTime));
         
         // Handle primary weapon firing if the ship is set to fire
         if (this.ship.isFiringPrimary) {

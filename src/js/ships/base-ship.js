@@ -21,11 +21,11 @@ export default class BaseShip {
         this.lastEnergyActionTime = 0; // Time of last energy action
         this.energyRegenerationStartTime = 0; // Time when regeneration should start
 
-        // Constants
-        this.acceleration = 0.01;
-        this.maxSpeedForward = 1;
-        this.maxSpeedBackward = 0.25;
-        this.drag = 0.99;
+        // Constants (scaled for per-second physics at 60 FPS, further increased for responsiveness)
+        this.acceleration = 3.6; // Further increased from 1.8 for even faster acceleration
+        this.maxSpeedForward = 180; // Further increased from 120 for higher top speed
+        this.maxSpeedBackward = 45; // Further increased from 30 for better maneuverability
+        this.drag = Math.pow(0.99, 60); // ~0.548 per second
         this.boostMultiplier = 2;
         this.boosting = false;
         

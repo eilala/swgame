@@ -5,7 +5,7 @@ export default class BlasterBolt {
         // Create the visual representation of the blaster bolt
         const geometry = new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8);
         const material = new THREE.MeshBasicMaterial({ 
-            color: 0x00aff, // Blue color for the blaster bolt
+            color: 0x00aaff, // Blue color for the blaster bolt
             emissive: 0x0066ff // Make it glow
         });
         
@@ -22,9 +22,11 @@ export default class BlasterBolt {
         
         // Physics properties
         this.direction = direction.clone().normalize();
-        this.velocity = this.direction.clone().multiplyScalar(30).add(shipVelocity); // Speed of 30 units per second + ship velocity
+        // Calculate bullet velocity: base speed in firing direction + ship's current velocity
+        const baseVelocity = new THREE.Vector3().copy(this.direction).multiplyScalar(60); // Increased from 30 to 60 for better separation from player speed
+        this.velocity = new THREE.Vector3().copy(shipVelocity).add(baseVelocity);
         this.damage = damage;
-        this.lifetime = 1; // Bolt will be destroyed after 1 second (travels 30 units at speed 30)
+        this.lifetime = 1; // Bolt will be destroyed after 1 second (travels 60 units at speed 60)
         this.age = 0;
         
         // Keep the visual representation always facing forward (no additional rotation)
