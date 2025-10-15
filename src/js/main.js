@@ -12,8 +12,8 @@ import BaseShip from './ships/base-ship.js';
 // Initialize Rapier physics
 let world = null;
 
-// Debug mode for tab-out bolt accumulation issue
-window.DEBUG_TAB_OUT_BOLTS = true;
+// Debug mode for tab-out bolt accumulation issue (set to false in production)
+// window.DEBUG_TAB_OUT_BOLTS = false;
 
 async function initializeRapier() {
      // Initialize Rapier WASM module
@@ -82,8 +82,6 @@ scene.add(directionalLight);
 const networkedBolts = [];
 const enemies = [];
 
-// Physics bodies map for collision handling
-const physicsBodies = new Map();
 window.world = world; // Make world globally available
 window.RAPIER = RAPIER; // Make RAPIER globally available for other scripts
 
@@ -385,7 +383,6 @@ function createPlayerRigidBody(mesh, isLocalPlayer = false) {
         playerId: isLocalPlayer ? myPlayerId : mesh.userData?.playerId
     };
 
-    physicsBodies.set(mesh, rigidBody);
     return rigidBody;
 }
 function handleNetworkedFire(data) {
@@ -494,19 +491,10 @@ function handlePlayerDamage(data) {
 
         // Handle component-specific damage for other players
         if (data.componentId && data.componentId !== null) {
-            console.log(`Applying component-specific damage to other player ${data.playerId}: componentId=${data.componentId}, damage=${data.damage || 10}`);
             // Apply damage to the other player's component
             if (playerObj.componentHealth && playerObj.componentHealth[data.componentId] !== undefined) {
                 playerObj.componentHealth[data.componentId] -= (data.damage || 10);
                 playerObj.componentHealth[data.componentId] = Math.max(0, playerObj.componentHealth[data.componentId]);
-                console.log(`Other player ${data.playerId} component ${data.componentId} health: ${playerObj.componentHealth[data.componentId]}`);
-
-                // Check if component should be destroyed
-                if (playerObj.componentHealth[data.componentId] <= 0) {
-                    console.log(`Other player ${data.playerId} component ${data.componentId} destroyed!`);
-                    // Visual destruction for other players would require server-side mesh manipulation
-                    // For now, we just track the health state
-                }
             }
         }
 
@@ -820,11 +808,6 @@ function animate() {
             }
         }
 
-        // Update networked bolts (moved to separate function)
-                /*
-                Networked bolts are now updated in the updateBolts function called earlier in the animation loop
-                to prevent them from accumulating when tabbed out.
-                */
         
         // Limit the number of active networked bolts to prevent performance issues
         if (networkedBolts.length > 100) { // Reasonable limit to prevent too many bolts
@@ -923,25 +906,16 @@ function animate() {
             const hitComponents = {};
 
             // Debug logging for raycasting - only log when there are intersections
-            // if (intersects.length > 0) {
-            //     console.log(`Raycasting found ${intersects.length} intersections for bolt at position ${bolt.mesh.position.x.toFixed(2)}, ${bolt.mesh.position.y.toFixed(2)}, ${bolt.mesh.position.z.toFixed(2)}`);
-            // }
 
             let hitSomething = false;
             for (const intersect of intersects) {
                 const hitObject = intersect.object;
 
-                // Debug logging
-                console.log(`Collision detected: Bolt at ${bolt.mesh.position.x.toFixed(2)}, ${bolt.mesh.position.y.toFixed(2)}, ${bolt.mesh.position.z.toFixed(2)} hit object at ${hitObject.position.x.toFixed(2)}, ${hitObject.position.y.toFixed(2)}, ${hitObject.position.z.toFixed(2)}`);
-                console.log(`Hit object userData:`, hitObject.userData);
-                console.log(`Hit object name:`, hitObject.name);
-                console.log(`Hit object type:`, hitObject.type);
 
                 // Check if bolt hit the shooter's own ship
                 // Only apply this check if it's not the owner's own bolt, or if the bolt is past the grace period
                 if ((hitObject === player.ship.mesh || (hitObject.userData && hitObject.userData.isPlayer)) &&
                     !(bolt.ownerId === myPlayerId && bolt.age < 0.3)) { // Don't damage self during grace period
-                    console.log("Bolt hit player's own ship");
                     // Remove the bolt
                     player.ship.primaryWeapon.bolts.splice(i, 1);
                     if (bolt.mesh && bolt.mesh.parent) {
@@ -953,18 +927,14 @@ function animate() {
 
                 // Check collision with enemies first
                 if (hitObject.userData && hitObject.userData.isEnemy) {
-                    console.log(`Hit object is enemy with ID: ${hitObject.userData.enemyId}`);
                     for (let j = enemies.length - 1; j >= 0; j--) {
                         const enemy = enemies[j];
                         // Check if this hitObject is associated with this enemy
                         if (enemy.mesh === hitObject || hitObject.userData.enemyId === enemy.id) {
-                            console.log(`Bolt hit enemy ${enemy.id} for ${bolt.damage} damage!`);
-
                             // Check if hit a specific component
                             let componentId = null;
                             if (hitObject.userData && hitObject.userData.componentId) {
                                 componentId = hitObject.userData.componentId;
-                                console.log(`Bolt hit specific component: ${componentId}`);
                             }
 
                             // Damage the enemy (with component-specific damage if applicable)
@@ -979,7 +949,6 @@ function animate() {
 
                             // If enemy is destroyed, remove it and notify other players
                             if (destroyed) {
-                                console.log(`Enemy ${enemy.id} destroyed!`);
                                 scene.remove(enemy.mesh);
                                 enemies.splice(j, 1);
 
@@ -998,59 +967,33 @@ function animate() {
                 }
 
                 // Check collision with other players
-                if (hitObject.userData && hitObject.userData.isPlayer) {
-                    // Get the player ID from the hit object's userData
-                    const hitPlayerId = hitObject.userData.playerId;
-                    for (const [playerId, playerObj] of Object.entries(otherPlayers)) {
-                        // Check if this hitObject is associated with this player
-                        if (playerObj.mesh === hitObject || playerObj.mesh.userData.playerId === hitPlayerId || hitPlayerId === parseInt(playerId)) {
-                            if (playerObj.isAlive) {
-                                console.log(`Local bolt hit player ${playerObj.nameSprite.userData?.name || 'Player'} (ID: ${playerId}) for ${bolt.damage} damage!`);
-
-                                // Check if hit a specific component
-                                let componentId = null;
-                                if (hitObject.userData && hitObject.userData.componentId) {
-                                    componentId = hitObject.userData.componentId;
-                                    console.log(`Local bolt hit player component: ${componentId} (mesh: ${hitObject.name})`);
-
-                                    // Apply damage to the component directly for other players
-                                    if (playerObj.componentHealth && playerObj.componentHealth[componentId] !== undefined) {
-                                        playerObj.componentHealth[componentId] -= bolt.damage;
-                                        playerObj.componentHealth[componentId] = Math.max(0, playerObj.componentHealth[componentId]);
-                                        console.log(`Other player ${playerId} component ${componentId} health now ${playerObj.componentHealth[componentId]}`);
-                                    }
-                                } else {
-                                    console.log(`DEBUG: hitObject.userData:`, hitObject.userData);
-                                    console.log(`DEBUG: hitObject.name: ${hitObject.name}`);
-                                }
-
-                                // Damage the player (with component-specific damage if applicable)
-                                player.ship.primaryWeapon.bolts.splice(i, 1);
-                                if (bolt.mesh && bolt.mesh.parent) {
-                                    bolt.mesh.parent.remove(bolt.mesh);
-                                }
-                                hitSomething = true;
-
-                                // Send player damage to server (don't hit own player)
-                                const targetId = parseInt(playerId);
-                                if (targetId !== bolt.ownerId) {
-                                    console.log(`Sending playerHit message: attackerPlayerId=${bolt.ownerId}, targetPlayerId=${targetId}, damage=${bolt.damage}, componentId=${componentId}`);
-                                    if (ws.readyState === WebSocket.OPEN) {
-                                        ws.send(JSON.stringify({
-                                            type: 'playerHit',
-                                            attackerPlayerId: bolt.ownerId,
-                                            targetPlayerId: targetId,
-                                            damage: bolt.damage,
-                                            componentId: componentId
-                                        }));
-                                    }
-                                }
-                                break;
-                            }
-                        }
+                if (hitObject.userData && hitObject.userData.isPlayer && hitObject.userData.playerId !== myPlayerId) {
+                    // Check if hit a specific component
+                    let componentId = null;
+                    if (hitObject.userData.componentId) {
+                        componentId = hitObject.userData.componentId;
                     }
-                    if (hitSomething) break;
+
+                    // Send damage to server for player-to-player hit (with component info)
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: 'playerHit',
+                            attackerPlayerId: myPlayerId,
+                            targetPlayerId: hitObject.userData.playerId,
+                            damage: bolt.damage || 10,
+                            componentId: componentId
+                        }));
+                    }
+
+                    // Remove the bolt
+                    player.ship.primaryWeapon.bolts.splice(i, 1);
+                    if (bolt.mesh && bolt.mesh.parent) {
+                        bolt.mesh.parent.remove(bolt.mesh);
+                    }
+                    hitSomething = true;
+                    break;
                 }
+
             }
 
             // If hit something, stop checking this bolt
@@ -1074,20 +1017,11 @@ function animate() {
 
             const intersects = raycaster.intersectObjects(collisionTargets, true);
 
-            // Debug logging for raycasting - only log when there are intersections
-            // if (intersects.length > 0) {
-            //     console.log(`Networked raycasting found ${intersects.length} intersections for bolt at position ${bolt.position.x.toFixed(2)}, ${bolt.position.y.toFixed(2)}, ${bolt.position.z.toFixed(2)}`);
-            // }
 
             let hitSomething = false;
             for (const intersect of intersects) {
                 const hitObject = intersect.object;
 
-                // Debug logging
-                console.log(`Networked bolt collision detected: Bolt at ${bolt.position.x.toFixed(2)}, ${bolt.position.y.toFixed(2)}, ${bolt.position.z.toFixed(2)} hit object at ${hitObject.position.x.toFixed(2)}, ${hitObject.position.y.toFixed(2)}, ${hitObject.position.z.toFixed(2)}`);
-                console.log(`Hit object userData:`, hitObject.userData);
-                console.log(`Hit object name:`, hitObject.name);
-                console.log(`Hit object type:`, hitObject.type);
 
                 // Check if networked bolt hit the local player
                 // Only apply this check if it's not the owner's own bolt, or if the bolt is past the grace period
@@ -1190,58 +1124,6 @@ function animate() {
                 }
 
                 // Check collision with other players
-                if (hitObject.userData && hitObject.userData.isPlayer) {
-                    // Get the player ID from the hit object's userData
-                    const hitPlayerId = hitObject.userData.playerId;
-                    for (const [playerId, playerObj] of Object.entries(otherPlayers)) {
-                        // Check if this hitObject is associated with this player
-                        if (playerObj.mesh === hitObject || playerObj.mesh.userData.playerId === hitPlayerId || hitPlayerId === parseInt(playerId)) {
-                            if (playerObj.isAlive) {
-                                if (window.DEBUG_TAB_OUT_BOLTS) {
-                                    console.log(`[DEBUG] Networked bolt hit player ${playerObj.nameSprite.userData?.name || 'Player'} (ID: ${playerId}) for 10 damage!`);
-                                }
-
-                                // Check if hit a specific component
-                                let componentId = null;
-                                if (hitObject.userData && hitObject.userData.componentId) {
-                                    componentId = hitObject.userData.componentId;
-                                    if (window.DEBUG_TAB_OUT_BOLTS) {
-                                        console.log(`[DEBUG] Networked bolt hit player component: ${componentId} (mesh: ${hitObject.name})`);
-                                    }
-                                }
-
-                                // Remove the bolt immediately after collision to prevent multiple hits
-                                if (bolt.parent) {
-                                    bolt.parent.remove(bolt);
-                                }
-                                networkedBolts.splice(i, 1);
-                                if (window.DEBUG_TAB_OUT_BOLTS) {
-                                    console.log(`[DEBUG] Removed networked bolt after hitting other player, remaining: ${networkedBolts.length}`);
-                                }
-                                hitSomething = true;
-
-                                // Send player damage to server (don't hit own player)
-                                const targetId = parseInt(playerId);
-                                if (targetId !== bolt.userData.ownerId) {
-                                    if (window.DEBUG_TAB_OUT_BOLTS) {
-                                        console.log(`[DEBUG] Sending networked playerHit message: attackerPlayerId=${bolt.userData.ownerId}, targetPlayerId=${targetId}, damage=10, componentId=${componentId}`);
-                                    }
-                                    if (ws.readyState === WebSocket.OPEN) {
-                                        ws.send(JSON.stringify({
-                                            type: 'playerHit',
-                                            attackerPlayerId: bolt.userData.ownerId,
-                                            targetPlayerId: targetId,
-                                            damage: 10, // Assuming damage 10 for networked bolts
-                                            componentId: componentId
-                                        }));
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    if (hitSomething) break;
-                }
             }
 
             // If hit something, stop checking this bolt
