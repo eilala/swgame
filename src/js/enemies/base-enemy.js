@@ -26,7 +26,7 @@ export default class BaseEnemy {
         const loader = new GLTFLoader();
         const cacheVersion = Date.now(); // Cache busting
         loader.load(
-            `src/assets/models/tiefighter/TIEFighter.glb?v=${cacheVersion}`,
+            `/assets/models/tiefighter/TIEFighter.glb?v=${cacheVersion}`,
             (gltf) => {
                 this.mesh = gltf.scene;
                 // Position the enemy

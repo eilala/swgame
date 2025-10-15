@@ -25,7 +25,7 @@ export default function(scene, world = null, staticObjects = null) {
     // Load and add ISD model
     const isdLoader = new GLTFLoader();
     isdLoader.load(
-        'src/assets/models/isd/ISD.glb',
+        '/assets/models/isd/ISD.glb',
         (gltf) => {
             const isdMesh = gltf.scene;
             isdMesh.scale.set(0.5, 0.5, 0.5);

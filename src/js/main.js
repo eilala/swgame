@@ -134,7 +134,7 @@ function spawnOtherPlayer(playerData) {
     // Load the TIE Fighter model for other players
     const loader = new GLTFLoader();
     loader.load(
-        'src/assets/models/tiefighter/TIEFighter.glb',
+        '/assets/models/tiefighter/TIEFighter.glb',
         (gltf) => {
             const mesh = gltf.scene;
             mesh.position.set(playerData.x || 0, playerData.y || 0, playerData.z || 0);

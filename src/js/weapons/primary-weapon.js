@@ -38,7 +38,7 @@ export default class PrimaryWeapon {
     loadAudio() {
         const audioLoader = new THREE.AudioLoader();
         audioLoader.load(
-            'src/assets/sfx/bolt.ogg',
+            '/assets/sfx/bolt.ogg',
             (buffer) => {
                 this.audioBuffer = buffer;
                 this.audioLoaded = true;

@@ -12,7 +12,7 @@ export default class BaseShip {
         
         const loader = new GLTFLoader();
         loader.load(
-            'src/assets/models/tiefighter/TIEFighter.glb',
+            '/assets/models/tiefighter/TIEFighter.glb',
             (gltf) => {
                 this.mesh = gltf.scene;
                 // Optional: Adjust scale, rotation, etc.
