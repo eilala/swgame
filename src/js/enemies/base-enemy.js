@@ -2,15 +2,24 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as RAPIER from '@dimforge/rapier3d';
 import { TieFighterEnemyConfig } from '../config/enemies/tie-fighter-enemy.js';
+import TargetDummyUI from '../ui/target-dummy-ui.js';
 
 export default class BaseEnemy {
     constructor(scene, world, position = new THREE.Vector3(0, 0, 0), health = 50, shield = 25, id = null) {
         this.world = world; // Store world reference
+        this.scene = scene; // Store scene reference
+        this.originalPosition = position.clone(); // Store original spawn position
+
         // Stats
         this.health = health !== undefined ? health : TieFighterEnemyConfig.DEFAULT_HEALTH;
         this.maxHealth = health !== undefined ? health : TieFighterEnemyConfig.DEFAULT_HEALTH;
         this.shield = shield !== undefined ? shield : TieFighterEnemyConfig.DEFAULT_SHIELD;
         this.maxShield = shield !== undefined ? shield : TieFighterEnemyConfig.DEFAULT_SHIELD;
+
+        // Respawn system
+        this.isRespawning = false;
+        this.respawnTimer = 0;
+        this.respawnTime = TieFighterEnemyConfig.RESPAWN_TIME || 5.0; // Default 5 seconds
 
         // Unique ID for networked synchronization
         this.id = id || Math.random().toString(36).substr(2, 9);
@@ -18,6 +27,9 @@ export default class BaseEnemy {
         // Component health tracking for localized damage
         this.componentHealth = {};
         this.componentMeshes = {};
+
+        // Store component IDs for reset functionality
+        this.componentIds = Object.keys(TieFighterEnemyConfig.COMPONENT_HEALTH);
 
         // Total hull health (separate from component health)
         this.totalHullHealth = TieFighterEnemyConfig.DEFAULT_HEALTH;
@@ -116,6 +128,9 @@ export default class BaseEnemy {
 
                 // Create physics body for the enemy
                 this.createPhysicsBody();
+                
+                // Create target dummy UI element
+                this.targetDummyUI = new TargetDummyUI(this);
             },
             undefined,
             (error) => {
@@ -140,6 +155,9 @@ export default class BaseEnemy {
 
                 // Create physics body for the enemy (fallback case)
                 this.createPhysicsBody();
+                
+                // Create target dummy UI element
+                this.targetDummyUI = new TargetDummyUI(this);
             }
         );
     }
@@ -264,13 +282,27 @@ export default class BaseEnemy {
     }
 
     update(deltaTime) {
-        // Basic update logic - can be overridden by subclasses
-        // For now, enemies just sit there
+        // Handle respawn logic
+        if (this.isRespawning) {
+            this.respawnTimer -= deltaTime;
+            if (this.respawnTimer <= 0) {
+                this.respawn();
+            }
+        } else {
+            // Basic update logic - can be overridden by subclasses
+            // For now, enemies just sit there
 
-        // Update physics body position and rotation if they exist
-        if (this.rigidBody && this.mesh) {
-            this.rigidBody.setTranslation(this.mesh.position, true);
-            this.rigidBody.setRotation(this.mesh.quaternion, true);
+            // Update physics body position and rotation if they exist
+            if (this.rigidBody && this.mesh) {
+                this.rigidBody.setTranslation(this.mesh.position, true);
+                this.rigidBody.setRotation(this.mesh.quaternion, true);
+            }
+            
+            // Update target dummy UI if it exists
+            if (this.targetDummyUI) {
+                this.targetDummyUI.updatePosition();
+                this.targetDummyUI.update();
+            }
         }
     }
 
@@ -291,6 +323,127 @@ export default class BaseEnemy {
             delete this.componentMeshes[componentId];
 
             console.log(`Component ${componentId} fully destroyed on enemy ${this.id}`);
+        }
+    }
+
+    /**
+     * Start the respawn process
+     */
+    startRespawn() {
+        console.log(`Enemy ${this.id} starting respawn process for ${this.respawnTime} seconds`);
+        this.isRespawning = true;
+        this.respawnTimer = this.respawnTime;
+
+        // Remove from scene temporarily
+        if (this.mesh && this.mesh.parent) {
+            this.scene.remove(this.mesh);
+        }
+
+        // Remove physics body
+        if (this.rigidBody) {
+            this.world.removeRigidBody(this.rigidBody);
+            this.rigidBody = null;
+        }
+    }
+
+    /**
+     * Complete the respawn process
+     */
+    respawn() {
+        console.log(`Enemy ${this.id} respawning at position ${this.originalPosition.x}, ${this.originalPosition.y}, ${this.originalPosition.z}`);
+        this.isRespawning = false;
+
+        // Reset health and shields
+        this.health = this.maxHealth;
+        this.shield = this.maxShield;
+        this.totalHullHealth = this.maxTotalHullHealth;
+
+        // Reset component health and tracking
+        this.resetComponentHealth();
+
+        // Reset position
+        this.mesh.position.copy(this.originalPosition);
+        this.scene.add(this.mesh);
+
+        // Recreate physics body (use a timeout to ensure mesh is properly added to scene)
+        setTimeout(() => {
+            this.createPhysicsBody();
+        }, 10);
+
+        // Reassign component meshes and userData
+        this.mesh.traverse((child) => {
+            if (child.isMesh) {
+                // Reassign component IDs based on mesh name
+                let componentId = null;
+                if (child.name.includes('RightWing') || child.name === 'RightWing' ||
+                    (child.name.includes('001Wing') && child.position && child.position.x > 0)) {
+                    componentId = 'right_wing';
+                } else if (child.name.includes('LeftWing') || child.name === 'LeftWing' ||
+                           (child.name.includes('001Wing') && child.position && child.position.x < 0)) {
+                    componentId = 'left_wing';
+                } else if (child.name.includes('MainHull') || child.name === 'MainHull') {
+                    componentId = 'main_body';
+                } else {
+                    componentId = 'main_body';
+                }
+
+                // Ensure component mesh tracking is restored
+                if (!this.componentMeshes[componentId]) {
+                    this.componentMeshes[componentId] = [];
+                }
+                if (!this.componentMeshes[componentId].includes(child)) {
+                    this.componentMeshes[componentId].push(child);
+                }
+
+                child.userData.componentId = componentId;
+                child.userData.isEnemy = true;
+                child.userData.enemyId = this.id;
+            }
+        });
+
+        // Ensure mesh userData is set
+        this.mesh.userData.isEnemy = true;
+        this.mesh.userData.enemyId = this.id;
+        
+        // Recreate target dummy UI element
+        if (this.targetDummyUI) {
+            this.targetDummyUI.destroy();
+        }
+        this.targetDummyUI = new TargetDummyUI(this);
+
+        console.log(`Enemy ${this.id} respawned successfully`);
+    }
+
+    /**
+     * Reset component health to default values
+     */
+    resetComponentHealth() {
+        // Reset all components to their default values
+        this.componentIds.forEach(componentId => {
+            switch (componentId) {
+                case 'main_body':
+                    this.componentHealth[componentId] = TieFighterEnemyConfig.COMPONENT_HEALTH.main_body;
+                    break;
+                case 'left_wing':
+                case 'right_wing':
+                    this.componentHealth[componentId] = TieFighterEnemyConfig.COMPONENT_HEALTH.left_wing;
+                    break;
+                default:
+                    this.componentHealth[componentId] = TieFighterEnemyConfig.COMPONENT_HEALTH.left_wing;
+            }
+        });
+
+        console.log(`Component health reset for enemy ${this.id}`);
+    }
+    
+    /**
+     * Clean up resources when enemy is destroyed
+     */
+    destroy() {
+        // Clean up target dummy UI if it exists
+        if (this.targetDummyUI) {
+            this.targetDummyUI.destroy();
+            this.targetDummyUI = null;
         }
     }
 }

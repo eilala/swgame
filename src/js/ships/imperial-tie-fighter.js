@@ -186,14 +186,9 @@ export default class ImperialTieFighter {
         this.boostAudioLoaded = false;
         this.boostSound = null;
         this.boostAudioBuffer = null;
-        this.boostAudioBufferReversed = null;
-        this.boostPlaybackStartTime = 0;
-        this.boostSoundDuration = 0;
-        this.boostElapsedTime = 0;
+        this.boostFadeInterval = null; // Track the fade interval
         this.loadBoostAudio();
 
-        // Track boosting state for audio
-        this.wasBoosting = false;
 
         // Track acceleration for audio volume
         this.currentAcceleration = 0;
@@ -411,8 +406,6 @@ export default class ImperialTieFighter {
             ImperialTieFighterConfig.BOOST_AUDIO,
             (buffer) => {
                 this.boostAudioBuffer = buffer;
-                // Create a shortened reversed buffer (first 2 seconds for reverse playback)
-                this.boostAudioBufferReversed = this.createShortenedReversedBuffer(buffer, 5.0);
                 this.boostAudioLoaded = true;
 
                 console.log('Imperial Tie Fighter boost audio loaded successfully');
@@ -428,65 +421,116 @@ export default class ImperialTieFighter {
     }
 
     /**
-     * Create a reversed copy of an audio buffer
+     * Update boost audio based on boosting state
      */
-    createReversedBuffer(originalBuffer) {
-        try {
-            const context = new (window.AudioContext || window.webkitAudioContext)();
-            const reversedBuffer = context.createBuffer(
-                originalBuffer.numberOfChannels,
-                originalBuffer.length,
-                originalBuffer.sampleRate
-            );
+    updateBoostAudio() {
+        if (!this.boostAudioLoaded || !this.boostAudioBuffer) {
+            return;
+        }
 
-            // Copy and reverse each channel
-            for (let channel = 0; channel < originalBuffer.numberOfChannels; channel++) {
-                const channelData = originalBuffer.getChannelData(channel);
-                const reversedChannelData = reversedBuffer.getChannelData(channel);
-
-                for (let i = 0; i < channelData.length; i++) {
-                    reversedChannelData[i] = channelData[channelData.length - 1 - i];
-                }
-            }
-
-            return reversedBuffer;
-        } catch (error) {
-            console.warn('Failed to create reversed audio buffer:', error);
-            return null;
+        // Check for boost state change
+        if (this.boosting && !this.boostSound) {
+            // Boost just started - play the sound
+            this.playBoostSound();
+        } else if (this.boosting && this.boostSound && this.boostFadeInterval) {
+            // Boost started again while fading out - stop fade and play new sound
+            clearInterval(this.boostFadeInterval);
+            this.boostFadeInterval = null;
+            this.stopBoostSound();
+            this.playBoostSound();
+        } else if (!this.boosting && this.boostSound) {
+            // Boost just stopped - fade out the sound
+            this.fadeOutBoostSound();
         }
     }
 
     /**
-     * Create a shortened reversed copy of an audio buffer (first N seconds)
+     * Play boost sound
      */
-    createShortenedReversedBuffer(originalBuffer, durationSeconds) {
+    playBoostSound() {
         try {
-            const context = new (window.AudioContext || window.webkitAudioContext)();
-            const sampleRate = originalBuffer.sampleRate;
-            const totalSamples = Math.floor(sampleRate * durationSeconds);
-            const availableSamples = Math.min(totalSamples, originalBuffer.length);
-
-            const shortenedBuffer = context.createBuffer(
-                originalBuffer.numberOfChannels,
-                availableSamples,
-                sampleRate
-            );
-
-            // Copy and reverse the first 'durationSeconds' of audio from each channel
-            for (let channel = 0; channel < originalBuffer.numberOfChannels; channel++) {
-                const channelData = originalBuffer.getChannelData(channel);
-                const shortenedChannelData = shortenedBuffer.getChannelData(channel);
-
-                for (let i = 0; i < availableSamples; i++) {
-                    // Take from the end of the original buffer (first part when reversed)
-                    shortenedChannelData[i] = channelData[channelData.length - 1 - i];
-                }
+            // Get the audio listener from the global camera
+            const audioListener = window.camera?.audioListener;
+            if (!audioListener) {
+                console.warn('AudioListener not found on camera for boost sound');
+                return;
             }
 
-            return shortenedBuffer;
+            // Create positional audio source
+            this.boostSound = new THREE.PositionalAudio(audioListener);
+            this.boostSound.setBuffer(this.boostAudioBuffer);
+            this.boostSound.setRefDistance(50);
+            this.boostSound.setVolume(0.05); // Low volume as requested
+            this.boostSound.setLoop(false); // Don't loop the boost sound
+
+            // Position the sound at the ship
+            this.boostSound.position.copy(this.mesh.position);
+            this.scene.add(this.boostSound);
+
+            // Play the sound
+            this.boostSound.play();
+
+            console.log('Imperial Tie Fighter boost sound played');
+
         } catch (error) {
-            console.warn('Failed to create shortened reversed audio buffer:', error);
-            return null;
+            console.warn('Failed to play boost sound:', error);
+            this.boostSound = null;
+        }
+    }
+
+    /**
+     * Fade out the currently playing boost sound over 2 seconds
+     */
+    fadeOutBoostSound() {
+        if (this.boostSound && !this.boostFadeInterval) {
+            try {
+                // Fade out the sound over 2 seconds
+                const fadeDuration = 2.0; // 2 seconds
+                const steps = 40; // More steps for smoother fade
+                const stepDuration = fadeDuration / steps;
+                const initialVolume = this.boostSound.getVolume();
+                const volumeStep = initialVolume / steps;
+
+                let currentStep = 0;
+                this.boostFadeInterval = setInterval(() => {
+                    currentStep++;
+                    const newVolume = Math.max(0, initialVolume - (volumeStep * currentStep));
+
+                    if (this.boostSound) {
+                        this.boostSound.setVolume(newVolume);
+                    }
+
+                    if (currentStep >= steps) {
+                        clearInterval(this.boostFadeInterval);
+                        this.boostFadeInterval = null;
+                        this.stopBoostSound();
+                    }
+                }, stepDuration * 100);
+
+                console.log('Imperial Tie Fighter boost sound fading out');
+
+            } catch (error) {
+                console.warn('Failed to fade out boost sound:', error);
+                clearInterval(this.boostFadeInterval);
+                this.boostFadeInterval = null;
+                this.stopBoostSound();
+            }
+        }
+    }
+
+    /**
+     * Stop boost sound
+     */
+    stopBoostSound() {
+        if (this.boostSound) {
+            try {
+                this.boostSound.stop();
+                this.scene.remove(this.boostSound);
+                this.boostSound = null;
+                console.log('Imperial Tie Fighter boost sound stopped');
+            } catch (error) {
+                console.warn('Failed to stop boost sound:', error);
+            }
         }
     }
 
@@ -518,8 +562,8 @@ export default class ImperialTieFighter {
         // Map speed to volume (0.0 to 0.1 range)
         // At rest: 0.0, at max speed: 0.1 (very quiet)
         const speedMagnitude = player.velocity.length();
-        const minVolume = 0.005;
-        const maxVolume = 0.05;
+        const minVolume = 0.0025;
+        const maxVolume = 0.0025;
         const maxSpeed = this.maxSpeedForward; // Use max speed as reference
 
         const targetVolume = minVolume + (maxVolume - minVolume) * Math.min(speedMagnitude / maxSpeed, 1.0);
@@ -534,135 +578,4 @@ export default class ImperialTieFighter {
         this.engineSound.position.copy(this.mesh.position);
     }
 
-    /**
-     * Update boost audio based on boosting state
-     */
-    updateBoostAudio() {
-        if (!this.boostAudioLoaded || !this.boostAudioBuffer) {
-            return;
-        }
-
-        // Update elapsed time if sound is playing
-        if (this.boostSound && this.boostSound.isPlaying) {
-            this.boostElapsedTime = (Date.now() / 1000) - this.boostPlaybackStartTime;
-        }
-
-        // Check for boost state change
-        if (this.boosting && !this.wasBoosting) {
-            // Boost just started - stop any existing sound and play forward
-            this.stopBoostSound();
-            this.playBoostSound(false);
-        } else if (!this.boosting && this.wasBoosting) {
-            // Boost just stopped - stop the sound and play reverse
-            this.stopBoostSound();
-            this.playBoostSound(true);
-        }
-
-        // Update previous state
-        this.wasBoosting = this.boosting;
-    }
-
-    /**
-     * Stop any currently playing boost sound
-     */
-    stopBoostSound() {
-        if (this.boostSound && this.boostSound.isPlaying) {
-            try {
-                this.boostSound.stop();
-                this.scene.remove(this.boostSound);
-                this.boostSound = null;
-                console.log('Imperial Tie Fighter boost sound stopped');
-            } catch (error) {
-                console.warn('Failed to stop boost sound:', error);
-            }
-        }
-    }
-
-    /**
-     * Fade out the currently playing boost sound to avoid pops
-     */
-    fadeOutBoostSound() {
-        if (this.boostSound && this.boostSound.isPlaying) {
-            try {
-                // Fade out the sound over 150ms to avoid pops
-                const fadeDuration = 0.15; // 150ms
-                const steps = 15;
-                const stepDuration = fadeDuration / steps;
-                const initialVolume = this.boostSound.getVolume();
-                const volumeStep = initialVolume / steps;
-
-                let currentStep = 0;
-                const fadeInterval = setInterval(() => {
-                    currentStep++;
-                    const newVolume = Math.max(0, initialVolume - (volumeStep * currentStep));
-
-                    if (this.boostSound) {
-                        this.boostSound.setVolume(newVolume);
-                    }
-
-                    if (currentStep >= steps) {
-                        clearInterval(fadeInterval);
-                        this.stopBoostSound();
-                    }
-                }, stepDuration * 1000);
-
-                console.log('Imperial Tie Fighter boost sound fading out');
-            } catch (error) {
-                console.warn('Failed to fade out boost sound:', error);
-                this.stopBoostSound();
-            }
-        }
-    }
-
-    /**
-     * Play boost sound forward or reverse
-     */
-    playBoostSound(reverse = false) {
-        try {
-            // Get the audio listener from the global camera
-            const audioListener = window.camera?.audioListener;
-            if (!audioListener) {
-                console.warn('AudioListener not found on camera for boost sound');
-                return;
-            }
-
-            // Create positional audio source
-            this.boostSound = new THREE.PositionalAudio(audioListener);
-
-            if (reverse) {
-                // For reverse playback, use the reversed buffer from the beginning
-                if (this.boostAudioBufferReversed) {
-                    this.boostSound.setBuffer(this.boostAudioBufferReversed);
-                    // Start from the beginning to avoid pops
-                    this.boostSound.offset = 0;
-                } else {
-                    this.boostSound.setBuffer(this.boostAudioBuffer);
-                }
-            } else {
-                // Forward playback from beginning
-                this.boostSound.setBuffer(this.boostAudioBuffer);
-                this.boostElapsedTime = 0;
-            }
-
-            this.boostSound.setRefDistance(50);
-            this.boostSound.setVolume(0.05); // Quiet volume for boost sound
-
-            // Position the sound at the ship
-            this.boostSound.position.copy(this.mesh.position);
-            this.scene.add(this.boostSound);
-
-            // Record playback start time and duration
-            this.boostPlaybackStartTime = Date.now() / 1000;
-            this.boostSoundDuration = this.boostSound.buffer?.duration || 0;
-
-            // Play the sound
-            this.boostSound.play();
-
-            console.log(`Imperial Tie Fighter boost sound played ${reverse ? 'reverse' : 'forward'} from offset ${reverse ? this.boostSound.offset : 0}`);
-
-        } catch (error) {
-            console.warn('Failed to play boost sound:', error);
-            this.boostSound = null;
-        }
-    }
 }

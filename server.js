@@ -7,11 +7,22 @@ let enemies = {};
 
 const playerNames = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel'];
 
-// Store player quaternions for better sync
+// Respawn time in milliseconds (5 seconds)
+const ENEMY_RESPAWN_TIME = 5000;
 
-// Initialize enemies (hardcoded for map1 for now)
-const dummyEnemy = { id: 'dummy', x: 0, y: 0, z: -10 };
-enemies[dummyEnemy.id] = dummyEnemy;
+// Store original enemy configurations for respawning
+const originalEnemies = {
+    'dummy': { id: 'dummy', x: 0, y: 0, z: -10 }
+};
+
+// Initialize enemies with original configurations
+Object.keys(originalEnemies).forEach(enemyId => {
+    enemies[enemyId] = { ...originalEnemies[enemyId] };
+});
+
+console.log('Initialized enemies:', enemies);
+
+// Store player quaternions for better sync
 
 console.log('WebSocket server started on port 8081');
 
@@ -158,17 +169,40 @@ wss.on('connection', (ws) => {
         } else if (message.type === 'enemyDestroyed') {
             // Remove enemy from server's enemies list
             if (enemies[message.enemyId]) {
+                // Store the destroyed enemy's original position for respawn
+                const destroyedEnemy = { ...enemies[message.enemyId] };
                 delete enemies[message.enemyId];
+                
+                // Broadcast enemy destruction to all players
+                wss.clients.forEach(client => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({
+                            type: 'enemyDestroyed',
+                            enemyId: message.enemyId
+                        }));
+                    }
+                });
+                
+                // Schedule enemy respawn after configured time
+                setTimeout(() => {
+                    // Check if this enemy should respawn (exists in original enemies)
+                    if (originalEnemies[destroyedEnemy.id]) {
+                        // Respawn the enemy at its original position
+                        enemies[destroyedEnemy.id] = { ...originalEnemies[destroyedEnemy.id] };
+                        console.log(`Enemy ${destroyedEnemy.id} respawned at position (${originalEnemies[destroyedEnemy.id].x}, ${originalEnemies[destroyedEnemy.id].y}, ${originalEnemies[destroyedEnemy.id].z})`);
+                        
+                        // Broadcast enemy respawn to all players
+                        wss.clients.forEach(client => {
+                            if (client.readyState === WebSocket.OPEN) {
+                                client.send(JSON.stringify({
+                                    type: 'enemyRespawned',
+                                    enemy: { ...originalEnemies[destroyedEnemy.id] }
+                                }));
+                            }
+                        });
+                    }
+                }, ENEMY_RESPAWN_TIME); // Configurable respawn time
             }
-            // Broadcast enemy destruction to all players
-            wss.clients.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify({
-                        type: 'enemyDestroyed',
-                        enemyId: message.enemyId
-                    }));
-                }
-            });
         } else if (message.type === 'playerHit') {
             // Handle player damage from another player's bullet
             const targetPlayer = players[message.targetPlayerId];

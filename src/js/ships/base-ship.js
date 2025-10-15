@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as RAPIER from '@dimforge/rapier3d';
 import PrimaryWeapon from '../weapons/primary-weapon.js';
-import { PlayerTieFighterConfig } from '../config/ships/player-tie-fighter.js';
+import { ImperialTieFighterConfig } from '../config/ships/imperial-tie-fighter.js';
 
 export default class BaseShip {
     constructor(scene, world) {
@@ -60,14 +60,14 @@ export default class BaseShip {
                             // Assign different health values for different components
                             switch (componentId) {
                                 case 'main_body':
-                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.main_body;
+                                    this.componentHealth[componentId] = ImperialTieFighterConfig.COMPONENT_HEALTH.main_body;
                                     break;
                                 case 'left_wing':
                                 case 'right_wing':
-                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.left_wing;
+                                    this.componentHealth[componentId] = ImperialTieFighterConfig.COMPONENT_HEALTH.left_wing;
                                     break;
                                 default:
-                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.left_wing;
+                                    this.componentHealth[componentId] = ImperialTieFighterConfig.COMPONENT_HEALTH.left_wing;
                             }
                             if (!this.componentMeshes[componentId]) {
                                 this.componentMeshes[componentId] = [];
@@ -133,14 +133,14 @@ export default class BaseShip {
                             // Assign different health values for different components
                             switch (componentId) {
                                 case 'main_body':
-                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.main_body;
+                                    this.componentHealth[componentId] = ImperialTieFighterConfig.COMPONENT_HEALTH.main_body;
                                     break;
                                 case 'left_wing':
                                 case 'right_wing':
-                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.left_wing;
+                                    this.componentHealth[componentId] = ImperialTieFighterConfig.COMPONENT_HEALTH.left_wing;
                                     break;
                                 default:
-                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.left_wing;
+                                    this.componentHealth[componentId] = ImperialTieFighterConfig.COMPONENT_HEALTH.left_wing;
                             }
                             if (!this.componentMeshes[componentId]) {
                                 this.componentMeshes[componentId] = [];
@@ -161,23 +161,23 @@ export default class BaseShip {
             }
         );
 
-        this.turnSpeed = PlayerTieFighterConfig.TURN_SPEED;
+        this.turnSpeed = ImperialTieFighterConfig.TURN_SPEED;
 
         // Stats
-        this.shield = PlayerTieFighterConfig.MAX_SHIELD;
-        this.maxShield = PlayerTieFighterConfig.MAX_SHIELD;
-        this.hull = PlayerTieFighterConfig.MAX_HULL;
-        this.maxHull = PlayerTieFighterConfig.MAX_HULL;
-        this.energy = PlayerTieFighterConfig.MAX_ENERGY;
-        this.maxEnergy = PlayerTieFighterConfig.MAX_ENERGY;
-        this.energyRegenerationRate = PlayerTieFighterConfig.ENERGY_REGENERATION_RATE;
-        this.energyDrainTimeout = PlayerTieFighterConfig.ENERGY_DRAIN_TIMEOUT;
+        this.shield = ImperialTieFighterConfig.MAX_SHIELD;
+        this.maxShield = ImperialTieFighterConfig.MAX_SHIELD;
+        this.hull = ImperialTieFighterConfig.MAX_HULL;
+        this.maxHull = ImperialTieFighterConfig.MAX_HULL;
+        this.energy = ImperialTieFighterConfig.MAX_ENERGY;
+        this.maxEnergy = ImperialTieFighterConfig.MAX_ENERGY;
+        this.energyRegenerationRate = ImperialTieFighterConfig.ENERGY_REGENERATION_RATE;
+        this.energyDrainTimeout = ImperialTieFighterConfig.ENERGY_DRAIN_TIMEOUT;
         this.lastEnergyActionTime = 0; // Time of last energy action
         this.energyRegenerationStartTime = 0; // Time when regeneration should start
 
         // Shield regeneration properties
-        this.shieldRegenerationRate = PlayerTieFighterConfig.SHIELD_REGENERATION_RATE;
-        this.shieldDrainTimeout = PlayerTieFighterConfig.SHIELD_DRAIN_TIMEOUT;
+        this.shieldRegenerationRate = ImperialTieFighterConfig.SHIELD_REGENERATION_RATE;
+        this.shieldDrainTimeout = ImperialTieFighterConfig.SHIELD_DRAIN_TIMEOUT;
         this.lastShieldDamageTime = 0; // Time of last shield damage
         this.shieldRegenerationStartTime = 0; // Time when shield regeneration should start
 
@@ -186,15 +186,15 @@ export default class BaseShip {
         this.componentMeshes = {};
 
         // Total hull health (separate from component health)
-        this.totalHullHealth = PlayerTieFighterConfig.MAX_HULL;
-        this.maxTotalHullHealth = PlayerTieFighterConfig.MAX_HULL;
+        this.totalHullHealth = ImperialTieFighterConfig.MAX_HULL;
+        this.maxTotalHullHealth = ImperialTieFighterConfig.MAX_HULL;
 
         // Constants (scaled for per-second physics at 60 FPS, further increased for responsiveness)
-        this.acceleration = PlayerTieFighterConfig.ACCELERATION;
-        this.maxSpeedForward = PlayerTieFighterConfig.MAX_SPEED_FORWARD;
-        this.maxSpeedBackward = PlayerTieFighterConfig.MAX_SPEED_BACKWARD;
-        this.drag = PlayerTieFighterConfig.DRAG;
-        this.boostMultiplier = PlayerTieFighterConfig.BOOST_MULTIPLIER;
+        this.acceleration = ImperialTieFighterConfig.ACCELERATION;
+        this.maxSpeedForward = ImperialTieFighterConfig.MAX_SPEED_FORWARD;
+        this.maxSpeedBackward = ImperialTieFighterConfig.MAX_SPEED_BACKWARD;
+        this.drag = ImperialTieFighterConfig.DRAG;
+        this.boostMultiplier = ImperialTieFighterConfig.BOOST_MULTIPLIER;
         this.boosting = false;
         
         // Initialize the primary weapon

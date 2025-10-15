@@ -3,8 +3,11 @@
  */
 export const TieFighterEnemyConfig = {
     // Health and shields
-    DEFAULT_HEALTH: 50,
+    DEFAULT_HEALTH: 100,
     DEFAULT_SHIELD: 25,
+
+    // Respawn settings
+    RESPAWN_TIME: 5.0, // Seconds to wait before respawning
 
     // Components
     COMPONENT_HEALTH: {

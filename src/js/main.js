@@ -43,8 +43,10 @@ camera.position.z = 5;
 const audioListener = new THREE.AudioListener();
 camera.add(audioListener);
 
-// Make audioListener globally available for weapon sounds
-window.camera = { audioListener };
+// Make camera and audioListener globally available for weapon sounds and UI
+window.camera = { audioListener, camera }; // Store both the audio listener and the camera object
+// Also make the camera directly available as a global variable
+window.mainCamera = camera;
 
 // Load audio buffer for networked laser sounds
 const audioLoader = new THREE.AudioLoader();
@@ -130,6 +132,8 @@ ws.onmessage = (event) => {
         handleNetworkedFire(message);
     } else if (message.type === 'enemyDestroyed') {
         handleEnemyDestruction(message.enemyId);
+    } else if (message.type === 'enemyRespawned') {
+        handleEnemyRespawn(message.enemy);
     } else if (message.type === 'playerDamaged') {
         handlePlayerDamage(message);
     } else if (message.type === 'playerComponentDestroyed') {
@@ -467,6 +471,10 @@ function handleEnemyDestruction(enemyId) {
     // Find and remove the enemy with the matching ID
     for (let i = enemies.length - 1; i >= 0; i--) {
         if (enemies[i].id === enemyId) {
+            // Clean up the enemy's resources before removing
+            if (enemies[i].destroy) {
+                enemies[i].destroy();
+            }
             scene.remove(enemies[i].mesh);
             enemies.splice(i, 1);
             console.log(`Enemy ${enemyId} destroyed for all players`);
@@ -729,6 +737,36 @@ function handleEnemyComponentDestruction(data) {
     }
 }
 
+function handleEnemyRespawn(enemyData) {
+    console.log(`Handling enemy respawn for enemy ${enemyData.id} at position (${enemyData.x}, ${enemyData.y}, ${enemyData.z})`);
+    
+    // Check if enemy already exists (shouldn't in normal cases, but just in case)
+    for (let i = 0; i < enemies.length; i++) {
+        if (enemies[i].id === enemyData.id) {
+            // Clean up the enemy's resources before removing
+            if (enemies[i].destroy) {
+                enemies[i].destroy();
+            }
+            // If enemy already exists, remove it first
+            scene.remove(enemies[i].mesh);
+            enemies.splice(i, 1);
+            break;
+        }
+    }
+    
+    // Create a new enemy at the respawned position
+    const enemy = new BaseEnemy(
+        scene,
+        world,
+        new THREE.Vector3(enemyData.x, enemyData.y, enemyData.z),
+        50, // health
+        25, // shield
+        enemyData.id
+    );
+    enemies.push(enemy);
+    console.log(`Enemy ${enemyData.id} respawned on client`);
+}
+
 // Player Camera
 const playerCamera = new PlayerCamera(camera, player);
 
@@ -799,10 +837,15 @@ function animate() {
 
         // Update enemies
         enemies.forEach(enemy => enemy.update(cappedDeltaTime));
-        
-        // Clean up dead enemies (if any remain after destruction)
+
+        // Clean up dead enemies that are not meant to respawn (server handles respawning)
         for (let i = enemies.length - 1; i >= 0; i--) {
             if (enemies[i].isDestroyed()) {
+                // Clean up the enemy's resources before removing
+                if (enemies[i].destroy) {
+                    enemies[i].destroy();
+                }
+                // Remove from scene and array since server will handle respawn via enemyRespawned message
                 scene.remove(enemies[i].mesh);
                 enemies.splice(i, 1);
             }
@@ -947,12 +990,11 @@ function animate() {
                             }
                             hitSomething = true;
 
-                            // If enemy is destroyed, remove it and notify other players
+                            // If enemy is destroyed, notify server (server handles respawn)
                             if (destroyed) {
-                                scene.remove(enemy.mesh);
-                                enemies.splice(j, 1);
+                                console.log(`Enemy ${enemy.id} destroyed! Notifying server.`);
 
-                                // Send enemy destruction to server
+                                // Send enemy destruction to server (server handles respawn)
                                 if (ws.readyState === WebSocket.OPEN) {
                                     ws.send(JSON.stringify({
                                         type: 'enemyDestroyed',
@@ -1101,15 +1143,13 @@ function animate() {
                             }
                             hitSomething = true;
 
-                            // If enemy is destroyed, remove it and notify other players
+                            // If enemy is destroyed by networked bolt, notify server (server handles respawn)
                             if (destroyed) {
                                 if (window.DEBUG_TAB_OUT_BOLTS) {
                                     console.log(`[DEBUG] Enemy ${enemy.id} destroyed by networked bolt!`);
                                 }
-                                scene.remove(enemy.mesh);
-                                enemies.splice(j, 1);
 
-                                // Send enemy destruction to server
+                                // Send enemy destruction to server (server handles respawn)
                                 if (ws.readyState === WebSocket.OPEN) {
                                     ws.send(JSON.stringify({
                                         type: 'enemyDestroyed',

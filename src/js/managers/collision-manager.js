@@ -250,10 +250,16 @@ export default class CollisionManager {
                     this.removeBolt(bolt, isLocalBolt);
 
                     if (destroyed) {
-                        console.log(`Enemy ${enemy.id} destroyed!`);
-                        this.gameState.scene.remove(enemy.mesh);
-                        this.gameState.enemies.splice(j, 1);
-                        this.networkManager.sendEnemyDestroyed(enemy.id);
+                        console.log(`Enemy ${enemy.id} destroyed! Starting respawn process.`);
+                        enemy.startRespawn();
+                        // Don't remove from enemies array, let it respawn
+                        // Send destruction message to server for networking
+                        if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                            window.ws.send(JSON.stringify({
+                                type: 'enemyDestroyed',
+                                enemyId: enemy.id
+                            }));
+                        }
                     }
                     return true;
                 }
