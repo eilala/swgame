@@ -47,16 +47,16 @@ export default class UI {
 
     update() {
         const speed = this.player.velocity.length();
-        this.speedElement.innerText = `Speed: ${speed.toFixed(2)}`;
+        this.speedElement.innerText = `Speed: ${Math.round(speed * 100)}`;
 
         const shield = this.player.ship.shield;
-        this.shieldElement.innerText = `Shield: ${shield}`;
+        this.shieldElement.innerText = `Shield: ${Math.round(shield)}`;
 
         const hull = this.player.ship.hull;
-        this.hullElement.innerText = `Hull: ${hull}`;
+        this.hullElement.innerText = `Hull: ${Math.round(hull)}`;
 
         const energy = this.player.ship.energy;
-        this.energyElement.innerText = `Energy: ${energy}`;
+        this.energyElement.innerText = `Energy: ${Math.round(energy)}`;
         
         // Update weapon status
         const weapon = this.player.ship.primaryWeapon;
@@ -66,7 +66,7 @@ export default class UI {
             const timeSinceLastShot = currentTime - weapon.lastShotTime;
             const timeUntilNextShot = Math.max(0, weapon.fireRate - timeSinceLastShot);
             
-            this.weaponElement.innerText = `Weapon: ${timeUntilNextShot.toFixed(2)}s until next shot`;
+            this.weaponElement.innerText = `Weapon: ${Math.round(timeUntilNextShot)}s until next shot`;
         }
     }
 }

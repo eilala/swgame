@@ -120,32 +120,6 @@ This is the most critical and complex part. A client-server model is essential t
 
 This project should be built incrementally.
 
-    Phase 1: The Sandbox (Single-Player)
-
-        Create the basic Three.js scene with a skybox.
-
-        Import an X-Wing model.
-
-        Implement flight controls (movement and aiming).
-
-        Implement basic weapon firing (spawning and moving laser bolts).
-
-        Place a few static "dummy" targets in the world.
-
-        Implement basic bounding sphere collision detection.
-        Goal: Have a single ship that can fly around and shoot things.
-
-    Phase 2: Going Online (Basic Multiplayer)
-
-        Set up the Node.js server with WebSockets.
-
-        On client connection, spawn a ship for them.
-
-        Broadcast every player's position and rotation to every other player.
-
-        Implement basic networked firing.
-        Goal: See other players flying and shooting in real-time. It will be jittery.
-
     Phase 3: Real Combat
 
         Implement health, shields, and damage logic on the server.

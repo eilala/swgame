@@ -31,7 +31,7 @@ export default class Controls {
         document.addEventListener('mousedown', (e) => {
             if (e.button === 0) {
                 // Primary weapon fire event
-                if (this.player.ship) {
+                if (this.player.ship && this.player.isAlive) {
                     this.player.ship.isFiringPrimary = true;
                 }
             }

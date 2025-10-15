@@ -155,10 +155,10 @@ wss.on('connection', (ws) => {
         } else if (message.type === 'playerHit') {
             // Handle player damage from another player's bullet
             const targetPlayer = players[message.targetPlayerId];
-            const attackerPlayer = players[playerId];
-            console.log(`Player ${attackerPlayer ? attackerPlayer.name : 'Unknown'} (ID: ${playerId}) hit player ${targetPlayer ? targetPlayer.name : 'Unknown'} (ID: ${message.targetPlayerId}) for ${message.damage} damage`);
+            const attackerPlayer = players[message.attackerPlayerId];
+            console.log(`Player ${attackerPlayer ? attackerPlayer.name : 'Unknown'} (ID: ${message.attackerPlayerId}) hit player ${targetPlayer ? targetPlayer.name : 'Unknown'} (ID: ${message.targetPlayerId}) for ${message.damage} damage`);
             // Prevent self-damage
-            if (message.targetPlayerId === playerId) {
+            if (message.targetPlayerId === message.attackerPlayerId) {
                 console.log('Player tried to damage themselves, ignoring');
                 return;
             }

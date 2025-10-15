@@ -2,23 +2,28 @@ import * as THREE from 'three';
 import BaseShip from '../ships/base-ship.js';
 
 export default class Player {
-    constructor() {
-        this.ship = new BaseShip();
+    constructor(scene) {
+        this.ship = new BaseShip(scene);
 
         // Physics properties
         this.position = new THREE.Vector3();
         this.quaternion = new THREE.Quaternion();
         this.velocity = new THREE.Vector3();
+
+        this.isAlive = true;
     }
 
     update(controls, deltaTime) {
+        // Cap deltaTime to prevent issues when tabbing back in
+        const cappedDeltaTime = Math.min(deltaTime, 0.05); // Maximum 50ms per frame
+        
         // Update time for energy management
         const currentTime = Date.now() / 1000; // Convert to seconds
         
         // Handle boost
         if (controls.keys.ShiftLeft && this.ship.energy > 0) {
             this.ship.boosting = true;
-            this.ship.energy -= 6 * deltaTime; // Drain energy (6 per second)
+            this.ship.energy -= 6 * cappedDeltaTime; // Drain energy (6 per second)
             // Update last energy action time when using boost
             this.ship.lastEnergyActionTime = currentTime;
         } else {
@@ -43,14 +48,14 @@ export default class Player {
             const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.quaternion);
             const forwardVelocity = this.velocity.dot(forward);
             if (forwardVelocity < currentMaxSpeedForward) {
-                this.velocity.add(forward.multiplyScalar(currentAcceleration * deltaTime));
+                this.velocity.add(forward.multiplyScalar(currentAcceleration * cappedDeltaTime));
             }
         }
         if (controls.keys.KeyS) {
             const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.quaternion);
             const backwardVelocity = -this.velocity.dot(forward);
             if (backwardVelocity < currentMaxSpeedBackward) {
-                this.velocity.sub(forward.multiplyScalar(currentAcceleration * deltaTime));
+                this.velocity.sub(forward.multiplyScalar(currentAcceleration * cappedDeltaTime));
             }
         }
 
@@ -59,8 +64,8 @@ export default class Player {
         if (!this.ship.boosting && this.ship.energy < this.ship.maxEnergy) {
             // Check if we've waited long enough to start regeneration
             if (currentTime - this.ship.lastEnergyActionTime >= this.ship.energyDrainTimeout) {
-                // Regenerate energy (5 per second)
-                this.ship.energy += 5 * deltaTime;
+                // Regenerate energy using the regeneration rate
+                this.ship.energy += this.ship.energyRegenerationRate * cappedDeltaTime;
 
                 // Ensure energy doesn't exceed maximum
                 if (this.ship.energy > this.ship.maxEnergy) {
@@ -70,11 +75,11 @@ export default class Player {
         }
 
         // Update position
-        this.position.add(this.velocity.clone().multiplyScalar(deltaTime));
-        this.velocity.multiplyScalar(Math.pow(this.ship.drag, deltaTime));
+        this.position.add(this.velocity.clone().multiplyScalar(cappedDeltaTime));
+        this.velocity.multiplyScalar(Math.pow(this.ship.drag, cappedDeltaTime));
         
-        // Handle primary weapon firing if the ship is set to fire
-        if (this.ship.isFiringPrimary) {
+        // Handle primary weapon firing if the ship is set to fire and player is alive
+        if (this.ship.isFiringPrimary && this.isAlive) {
             this.ship.firePrimaryWeapon(this);
             // Don't reset the firing flag - allow continuous firing
         }
