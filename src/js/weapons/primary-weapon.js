@@ -38,11 +38,8 @@ export default class PrimaryWeapon {
             // Calculate the direction the bolt should travel with center-of-view convergence
             const shipForward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.ship.mesh.quaternion);
 
-            // Aim directly toward the camera's center of view
-            // The camera is positioned at (0, 2, 5) relative to player, so we calculate direction from firing position to camera
-            const cameraOffset = new THREE.Vector3(0, 2, 5).applyQuaternion(player.quaternion);
-            const cameraPosition = player.position.clone().add(cameraOffset);
-            const cameraForward = cameraPosition.clone().sub(firingPosition).normalize();
+            // Aim directly toward the camera's center of view (along the camera's forward direction)
+            const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
 
             // Calculate convergence factor based on time since last shot (simulates weapon "warming up" or "aiming")
             // The longer you hold the trigger, the more accurate the weapon becomes to center of view
