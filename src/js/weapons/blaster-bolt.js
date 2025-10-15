@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as RAPIER from '@dimforge/rapier3d';
+import { BlasterBoltConfig } from '../config/bolts/blaster-bolt.js';
 
 /**
  * Represents a blaster bolt projectile with physics and visual representation.
@@ -21,9 +22,9 @@ export default class BlasterBolt {
 
         this.world = world; // Store world reference
 
-        this.damage = damage;
+        this.damage = BlasterBoltConfig.DAMAGE;
         this.ownerId = null; // Will be set by primary weapon
-        this.lifetime = 2.0; // Extended lifetime (travels 120 units at speed 60)
+        this.lifetime = BlasterBoltConfig.LIFETIME;
         this.age = 0;
         this.isDestroyed = false;
 
@@ -104,7 +105,7 @@ export default class BlasterBolt {
         this.direction = direction.clone().normalize();
 
         // Calculate final velocity (bolt speed + ship velocity)
-        const boltSpeed = 60; // Base bolt speed
+        const boltSpeed = BlasterBoltConfig.SPEED;
         const baseVelocity = this.direction.clone().multiplyScalar(boltSpeed);
         this.velocity = shipVelocity.clone().add(baseVelocity);
 

@@ -2,15 +2,16 @@ import * as THREE from 'three';
 import BaseEnemy from '../enemies/base-enemy.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import RAPIER from '@dimforge/rapier3d';
+import { Map1Config } from '../config/maps/map1-config.js';
 
 export default function(scene, world = null, staticObjects = null) {
-    scene.background = new THREE.Color(0x00000);
+    scene.background = new THREE.Color(Map1Config.BACKGROUND_COLOR);
 
     const starGeometry = new THREE.BufferGeometry();
-    const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.1 });
+    const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: Map1Config.STAR_SIZE });
 
     const starVertices = [];
-    for (let i = 0; i < 5000; i++) {
+    for (let i = 0; i < Map1Config.STAR_COUNT; i++) {
         const x = (Math.random() - 0.5) * 2000;
         const y = (Math.random() - 0.5) * 2000;
         const z = (Math.random() - 0.5) * 2000;
@@ -28,8 +29,8 @@ export default function(scene, world = null, staticObjects = null) {
         '/assets/models/isd/ISD.glb',
         (gltf) => {
             const isdMesh = gltf.scene;
-            isdMesh.scale.set(0.5, 0.5, 0.5);
-            isdMesh.position.set(200, 0, 0);
+            isdMesh.scale.set(Map1Config.ISD_SCALE, Map1Config.ISD_SCALE, Map1Config.ISD_SCALE);
+            isdMesh.position.set(Map1Config.ISD_POSITION.x, Map1Config.ISD_POSITION.y, Map1Config.ISD_POSITION.z);
 
             // Mark the main ISD mesh for collision detection
             isdMesh.userData = isdMesh.userData || {};

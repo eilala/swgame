@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import BlasterBolt from './blaster-bolt.js';
+import { BlasterConfig } from '../config/weapons/blaster.js';
 
 /**
  * Primary weapon system for ships, handling firing mechanics and projectile management.
@@ -14,13 +15,13 @@ export default class PrimaryWeapon {
      * @param {number} fireRate - Shots per second (default: 5)
      * @param {number} convergenceRange - Distance for full convergence (default: 50)
      */
-    constructor(ship, energyCost = 5, damage = 10, fireRate = 5, convergenceRange = 50) {
+    constructor(ship) {
         this.ship = ship;
-        this.energyCost = energyCost;
-        this.damage = damage;
-        this.fireRate = fireRate; // Shots per second
-        this.fireInterval = 1 / fireRate; // Time between shots
-        this.convergenceRange = convergenceRange;
+        this.energyCost = BlasterConfig.PRIMARY.ENERGY_COST;
+        this.damage = BlasterConfig.PRIMARY.DAMAGE;
+        this.fireRate = BlasterConfig.PRIMARY.FIRE_RATE;
+        this.fireInterval = 1 / this.fireRate; // Time between shots
+        this.convergenceRange = BlasterConfig.PRIMARY.CONVERGENCE_RANGE;
         this.lastShotTime = 0;
         this.bolts = [];
         this.isFiring = false;

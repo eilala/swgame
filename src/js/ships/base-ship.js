@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as RAPIER from '@dimforge/rapier3d';
 import PrimaryWeapon from '../weapons/primary-weapon.js';
+import { PlayerTieFighterConfig } from '../config/ships/player-tie-fighter.js';
 
 export default class BaseShip {
     constructor(scene, world) {
@@ -59,14 +60,14 @@ export default class BaseShip {
                             // Assign different health values for different components
                             switch (componentId) {
                                 case 'main_body':
-                                    this.componentHealth[componentId] = 100; // Main hull component health
+                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.main_body;
                                     break;
                                 case 'left_wing':
                                 case 'right_wing':
-                                    this.componentHealth[componentId] = 50; // Wing component health
+                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.left_wing;
                                     break;
                                 default:
-                                    this.componentHealth[componentId] = 50;
+                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.left_wing;
                             }
                             if (!this.componentMeshes[componentId]) {
                                 this.componentMeshes[componentId] = [];
@@ -132,14 +133,14 @@ export default class BaseShip {
                             // Assign different health values for different components
                             switch (componentId) {
                                 case 'main_body':
-                                    this.componentHealth[componentId] = 100; // Main hull component health
+                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.main_body;
                                     break;
                                 case 'left_wing':
                                 case 'right_wing':
-                                    this.componentHealth[componentId] = 50; // Wing component health
+                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.left_wing;
                                     break;
                                 default:
-                                    this.componentHealth[componentId] = 50;
+                                    this.componentHealth[componentId] = PlayerTieFighterConfig.COMPONENT_HEALTH.left_wing;
                             }
                             if (!this.componentMeshes[componentId]) {
                                 this.componentMeshes[componentId] = [];
@@ -160,23 +161,23 @@ export default class BaseShip {
             }
         );
 
-        this.turnSpeed = 2;
+        this.turnSpeed = PlayerTieFighterConfig.TURN_SPEED;
 
         // Stats
-        this.shield = 10; // Reduced for testing component destruction
-        this.maxShield = 10;
-        this.hull = 100;
-        this.maxHull = 100;
-        this.energy = 100;
-        this.maxEnergy = 100;
-        this.energyRegenerationRate = 10; // Energy per second
-        this.energyDrainTimeout = 2; // Seconds to wait before regeneration starts
+        this.shield = PlayerTieFighterConfig.MAX_SHIELD;
+        this.maxShield = PlayerTieFighterConfig.MAX_SHIELD;
+        this.hull = PlayerTieFighterConfig.MAX_HULL;
+        this.maxHull = PlayerTieFighterConfig.MAX_HULL;
+        this.energy = PlayerTieFighterConfig.MAX_ENERGY;
+        this.maxEnergy = PlayerTieFighterConfig.MAX_ENERGY;
+        this.energyRegenerationRate = PlayerTieFighterConfig.ENERGY_REGENERATION_RATE;
+        this.energyDrainTimeout = PlayerTieFighterConfig.ENERGY_DRAIN_TIMEOUT;
         this.lastEnergyActionTime = 0; // Time of last energy action
         this.energyRegenerationStartTime = 0; // Time when regeneration should start
-        
+
         // Shield regeneration properties
-        this.shieldRegenerationRate = 5; // Shield points per second
-        this.shieldDrainTimeout = 3; // Seconds to wait after taking damage before regeneration starts
+        this.shieldRegenerationRate = PlayerTieFighterConfig.SHIELD_REGENERATION_RATE;
+        this.shieldDrainTimeout = PlayerTieFighterConfig.SHIELD_DRAIN_TIMEOUT;
         this.lastShieldDamageTime = 0; // Time of last shield damage
         this.shieldRegenerationStartTime = 0; // Time when shield regeneration should start
 
@@ -185,15 +186,15 @@ export default class BaseShip {
         this.componentMeshes = {};
 
         // Total hull health (separate from component health)
-        this.totalHullHealth = 100;
-        this.maxTotalHullHealth = 100;
+        this.totalHullHealth = PlayerTieFighterConfig.MAX_HULL;
+        this.maxTotalHullHealth = PlayerTieFighterConfig.MAX_HULL;
 
         // Constants (scaled for per-second physics at 60 FPS, further increased for responsiveness)
-        this.acceleration = 10; // Further increased from 1.8 for even faster acceleration
-        this.maxSpeedForward = 250; // Further increased from 120 for higher top speed
-        this.maxSpeedBackward = 50; // Further increased from 30 for better maneuverability
-        this.drag = Math.pow(0.99, 60); // ~0.548 per second
-        this.boostMultiplier = 2;
+        this.acceleration = PlayerTieFighterConfig.ACCELERATION;
+        this.maxSpeedForward = PlayerTieFighterConfig.MAX_SPEED_FORWARD;
+        this.maxSpeedBackward = PlayerTieFighterConfig.MAX_SPEED_BACKWARD;
+        this.drag = PlayerTieFighterConfig.DRAG;
+        this.boostMultiplier = PlayerTieFighterConfig.BOOST_MULTIPLIER;
         this.boosting = false;
         
         // Initialize the primary weapon

@@ -1,15 +1,16 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as RAPIER from '@dimforge/rapier3d';
+import { TieFighterEnemyConfig } from '../config/enemies/tie-fighter-enemy.js';
 
 export default class BaseEnemy {
     constructor(scene, world, position = new THREE.Vector3(0, 0, 0), health = 50, shield = 25, id = null) {
         this.world = world; // Store world reference
         // Stats
-        this.health = health;
-        this.maxHealth = health;
-        this.shield = shield;
-        this.maxShield = shield;
+        this.health = health !== undefined ? health : TieFighterEnemyConfig.DEFAULT_HEALTH;
+        this.maxHealth = health !== undefined ? health : TieFighterEnemyConfig.DEFAULT_HEALTH;
+        this.shield = shield !== undefined ? shield : TieFighterEnemyConfig.DEFAULT_SHIELD;
+        this.maxShield = shield !== undefined ? shield : TieFighterEnemyConfig.DEFAULT_SHIELD;
 
         // Unique ID for networked synchronization
         this.id = id || Math.random().toString(36).substr(2, 9);
@@ -19,8 +20,8 @@ export default class BaseEnemy {
         this.componentMeshes = {};
 
         // Total hull health (separate from component health)
-        this.totalHullHealth = 100;
-        this.maxTotalHullHealth = 100;
+        this.totalHullHealth = TieFighterEnemyConfig.DEFAULT_HEALTH;
+        this.maxTotalHullHealth = TieFighterEnemyConfig.DEFAULT_HEALTH;
 
         // Load the TIE Fighter model
         const loader = new GLTFLoader();
@@ -75,14 +76,14 @@ export default class BaseEnemy {
                             // Assign different health values for different components
                             switch (componentId) {
                                 case 'main_body':
-                                    this.componentHealth[componentId] = 100; // Main hull component health
+                                    this.componentHealth[componentId] = TieFighterEnemyConfig.COMPONENT_HEALTH.main_body;
                                     break;
                                 case 'left_wing':
                                 case 'right_wing':
-                                    this.componentHealth[componentId] = 50; // Wing component health
+                                    this.componentHealth[componentId] = TieFighterEnemyConfig.COMPONENT_HEALTH.left_wing;
                                     break;
                                 default:
-                                    this.componentHealth[componentId] = 50;
+                                    this.componentHealth[componentId] = TieFighterEnemyConfig.COMPONENT_HEALTH.left_wing;
                             }
                             this.componentMeshes[componentId] = [];
                         }
