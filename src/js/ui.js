@@ -7,6 +7,7 @@ export default class UI {
         this.createHullOverlay();
         this.createEnergyOverlay();
         this.createWeaponOverlay();
+        this.createComponentHealthOverlay();
     }
 
     createCrosshair() {
@@ -45,6 +46,12 @@ export default class UI {
         document.body.appendChild(this.weaponElement);
     }
 
+    createComponentHealthOverlay() {
+        this.componentHealthElement = document.createElement('div');
+        this.componentHealthElement.classList.add('ui-overlay', 'component-health-overlay');
+        document.body.appendChild(this.componentHealthElement);
+    }
+
     update() {
         const speed = this.player.velocity.length();
         this.speedElement.innerText = `Speed: ${Math.round(speed * 100)}`;
@@ -55,9 +62,22 @@ export default class UI {
         const hull = this.player.ship.hull;
         this.hullElement.innerText = `Hull: ${Math.round(hull)}`;
 
+        const totalHull = this.player.ship.totalHullHealth || 100;
         const energy = this.player.ship.energy;
         this.energyElement.innerText = `Energy: ${Math.round(energy)}`;
-        
+
+        // Update component health display
+        const componentHealth = this.player.ship.componentHealth || {};
+        const mainBodyHealth = componentHealth.main_body || 100;
+        const leftWingHealth = componentHealth.left_wing || 50;
+        const rightWingHealth = componentHealth.right_wing || 50;
+
+        this.componentHealthElement.innerText =
+            `Total Hull: ${Math.round(totalHull)}/100 | ` +
+            `Main: ${Math.round(mainBodyHealth)} | ` +
+            `Left Wing: ${Math.round(leftWingHealth)} | ` +
+            `Right Wing: ${Math.round(rightWingHealth)}`;
+
         // Update weapon status
         const weapon = this.player.ship.primaryWeapon;
         if (weapon) {
@@ -65,7 +85,7 @@ export default class UI {
             const currentTime = Date.now() / 1000;
             const timeSinceLastShot = currentTime - weapon.lastShotTime;
             const timeUntilNextShot = Math.max(0, weapon.fireRate - timeSinceLastShot);
-            
+
             this.weaponElement.innerText = `Weapon: ${Math.round(timeUntilNextShot)}s until next shot`;
         }
     }

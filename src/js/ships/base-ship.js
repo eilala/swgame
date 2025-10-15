@@ -19,6 +19,7 @@ export default class BaseShip {
                 this.mesh.scale.set(0.5, 0.5, 0.5);
 
                 // Traverse the model and set material properties for visibility
+                // Also assign health to logical components (main body, left wing, right wing)
                 this.mesh.traverse((child) => {
                     if (child.isMesh) {
                         // Ensure materials have proper settings for lighting
@@ -34,6 +35,49 @@ export default class BaseShip {
                                 child.material.needsUpdate = true;
                             }
                         }
+
+                        // Assign component-specific health based on mesh name
+                        let componentId = null;
+
+                        // Check for the specific component names: RightWing, LeftWing, MainHull
+                        // Also handle the actual mesh names that are being detected
+                        if (child.name.includes('RightWing') || child.name === 'RightWing' ||
+                            (child.name.includes('001Wing') && child.position && child.position.x > 0)) {
+                            componentId = 'right_wing';
+                        } else if (child.name.includes('LeftWing') || child.name === 'LeftWing' ||
+                                   (child.name.includes('001Wing') && child.position && child.position.x < 0)) {
+                            componentId = 'left_wing';
+                        } else if (child.name.includes('MainHull') || child.name === 'MainHull') {
+                            componentId = 'main_body';
+                        } else {
+                            // Fallback for any other meshes - assume they belong to main body
+                            componentId = 'main_body';
+                        }
+
+                        // Initialize component health if not already done
+                        if (!this.componentHealth[componentId]) {
+                            // Assign different health values for different components
+                            switch (componentId) {
+                                case 'main_body':
+                                    this.componentHealth[componentId] = 100; // Main hull component health
+                                    break;
+                                case 'left_wing':
+                                case 'right_wing':
+                                    this.componentHealth[componentId] = 50; // Wing component health
+                                    break;
+                                default:
+                                    this.componentHealth[componentId] = 50;
+                            }
+                            this.componentMeshes[componentId] = [];
+                        }
+
+                        // Track all meshes belonging to this component
+                        this.componentMeshes[componentId].push(child);
+                        child.userData.componentId = componentId;
+                        child.userData.isPlayer = true;
+                        child.userData.playerId = window.myPlayerId || 0;
+
+                        console.log(`Assigned mesh "${child.name}" to component "${componentId}"`);
                     }
                 });
 
@@ -41,15 +85,6 @@ export default class BaseShip {
                 this.scene.add(this.mesh);
                 this.modelLoaded = true; // Mark as loaded
                 console.log('Player ship model added to scene');
-
-                // Mark all child meshes as player ship parts too
-                this.mesh.traverse((child) => {
-                    if (child.isMesh) {
-                        child.userData = child.userData || {};
-                        child.userData.isPlayer = true; // Use same flag as other players for consistency
-                        child.userData.playerId = window.myPlayerId || 0; // Set player ID for the local player
-                    }
-                });
 
                 // Create physics body for the player ship
                 this.createPhysicsBody();
@@ -64,12 +99,54 @@ export default class BaseShip {
                 this.scene.add(this.mesh);
                 this.modelLoaded = true; // Mark as loaded (with fallback)
                 
-                // Mark all child meshes as player ship parts too
+                // Traverse the model and assign component health, also mark as player parts
                 this.mesh.traverse((child) => {
                     if (child.isMesh) {
-                        child.userData = child.userData || {};
+                        // Assign component-specific health based on mesh name
+                        let componentId = null;
+
+                        // Check for the specific component names: RightWing, LeftWing, MainHull
+                        // Handle actual mesh names like RightWing_3
+                        if (child.name.includes('RightWing') || child.name === 'RightWing' ||
+                            child.name.includes('RightWing_') ||
+                            (child.name.includes('001Wing') && child.position && child.position.x > 0)) {
+                            componentId = 'right_wing';
+                        } else if (child.name.includes('LeftWing') || child.name === 'LeftWing' ||
+                                   child.name.includes('LeftWing_') ||
+                                   (child.name.includes('001Wing') && child.position && child.position.x < 0)) {
+                            componentId = 'left_wing';
+                        } else if (child.name.includes('MainHull') || child.name === 'MainHull' ||
+                                   child.name.includes('MainHull_')) {
+                            componentId = 'main_body';
+                        } else {
+                            // Fallback for any other meshes - assume they belong to main body
+                            componentId = 'main_body';
+                        }
+
+                        // Initialize component health if not already done
+                        if (!this.componentHealth[componentId]) {
+                            // Assign different health values for different components
+                            switch (componentId) {
+                                case 'main_body':
+                                    this.componentHealth[componentId] = 100; // Main hull component health
+                                    break;
+                                case 'left_wing':
+                                case 'right_wing':
+                                    this.componentHealth[componentId] = 50; // Wing component health
+                                    break;
+                                default:
+                                    this.componentHealth[componentId] = 50;
+                            }
+                            this.componentMeshes[componentId] = [];
+                        }
+
+                        // Track all meshes belonging to this component
+                        this.componentMeshes[componentId].push(child);
+                        child.userData.componentId = componentId;
                         child.userData.isPlayer = true; // Use same flag as other players for consistency
                         child.userData.playerId = window.myPlayerId || 0; // Set player ID for the local player
+
+                        console.log(`Player ship: Assigned mesh "${child.name}" to component "${componentId}"`);
                     }
                 });
             }
@@ -78,8 +155,8 @@ export default class BaseShip {
         this.turnSpeed = 2;
 
         // Stats
-        this.shield = 100;
-        this.maxShield = 100;
+        this.shield = 10; // Reduced for testing component destruction
+        this.maxShield = 10;
         this.hull = 100;
         this.maxHull = 100;
         this.energy = 100;
@@ -94,6 +171,14 @@ export default class BaseShip {
         this.shieldDrainTimeout = 3; // Seconds to wait after taking damage before regeneration starts
         this.lastShieldDamageTime = 0; // Time of last shield damage
         this.shieldRegenerationStartTime = 0; // Time when shield regeneration should start
+
+        // Component health tracking for localized damage
+        this.componentHealth = {};
+        this.componentMeshes = {};
+
+        // Total hull health (separate from component health)
+        this.totalHullHealth = 100;
+        this.maxTotalHullHealth = 100;
 
         // Constants (scaled for per-second physics at 60 FPS, further increased for responsiveness)
         this.acceleration = 10; // Further increased from 1.8 for even faster acceleration
@@ -175,29 +260,102 @@ export default class BaseShip {
     }
     
     // Method to handle taking damage
-    takeDamage(damage) {
+    takeDamage(damage, componentId = null) {
         // Update the last shield damage time
         const currentTime = Date.now() / 1000; // Convert to seconds
         this.lastShieldDamageTime = currentTime;
-        
-        // Apply damage to shield first, then hull
+
+        let remainingDamage = damage;
+
+        // FIRST: Apply damage to shields (shields absorb damage before anything else)
         if (this.shield > 0) {
-            const shieldDamage = Math.min(damage, this.shield);
+            const shieldDamage = Math.min(remainingDamage, this.shield);
             this.shield -= shieldDamage;
-            damage -= shieldDamage;
-            console.log(`Shield damage: ${shieldDamage}, remaining shield: ${this.shield}`);
+            remainingDamage -= shieldDamage;
+            this.shield = Math.max(0, this.shield);
+            console.log(`Shield absorbed ${shieldDamage} damage, remaining shield: ${this.shield}`);
         }
-        
-        if (damage > 0) {
-            this.hull -= damage;
-            console.log(`Hull damage: ${damage}, remaining hull: ${this.hull}`);
+
+        // SECOND: If shields are depleted and we have remaining damage, apply to components and hull
+        if (remainingDamage > 0) {
+            // Always apply damage to total hull health
+            const totalHullDamage = Math.min(remainingDamage, this.totalHullHealth);
+            this.totalHullHealth -= totalHullDamage;
+            remainingDamage -= totalHullDamage;
+            this.totalHullHealth = Math.max(0, this.totalHullHealth);
+
+            // Apply damage to specific component if provided
+            if (componentId && this.componentHealth[componentId] !== undefined) {
+                const componentDamage = Math.min(totalHullDamage, this.componentHealth[componentId]);
+                this.componentHealth[componentId] -= componentDamage;
+
+                // Ensure component health doesn't go below 0
+                this.componentHealth[componentId] = Math.max(0, this.componentHealth[componentId]);
+
+                // If component is destroyed, remove it from scene and notify other players
+                if (this.componentHealth[componentId] <= 0) {
+                    console.log(`Player ship component ${componentId} health reached 0, destroying component!`);
+                    this.destroyComponent(componentId);
+
+                    // Send component destruction to server for multiplayer sync
+                    if (window.ws && window.ws.readyState === WebSocket.OPEN && window.myPlayerId) {
+                        console.log(`Sending component destruction message for ${componentId}`);
+                        window.ws.send(JSON.stringify({
+                            type: 'playerComponentDestroyed',
+                            playerId: window.myPlayerId,
+                            componentId: componentId
+                        }));
+                    }
+                }
+
+                console.log(`Player ship component ${componentId} damaged for ${componentDamage}, remaining component health: ${this.componentHealth[componentId]}`);
+            }
+
+            // Apply any remaining damage to legacy hull (for backward compatibility)
+            if (remainingDamage > 0) {
+                this.hull -= remainingDamage;
+                this.hull = Math.max(0, this.hull);
+                console.log(`Legacy hull damage: ${remainingDamage}, remaining hull: ${this.hull}`);
+            }
+
+            console.log(`Player ship total hull health: ${this.totalHullHealth}/100`);
         }
-        
-        // If hull is below 0, clamp it to 0
-        if (this.hull < 0) {
-            this.hull = 0;
+
+        // Check destruction conditions:
+        // 1. Total hull health ≤ 0, OR
+        // 2. Main hull component destroyed, OR
+        // 3. Both wings destroyed
+        const mainHullDestroyed = !this.componentHealth.main_body || this.componentHealth.main_body <= 0;
+        const leftWingDestroyed = !this.componentHealth.left_wing || this.componentHealth.left_wing <= 0;
+        const rightWingDestroyed = !this.componentHealth.right_wing || this.componentHealth.right_wing <= 0;
+        const bothWingsDestroyed = leftWingDestroyed && rightWingDestroyed;
+
+        const isDestroyed = this.totalHullHealth <= 0 || mainHullDestroyed || bothWingsDestroyed;
+
+        if (isDestroyed) {
+            console.log('Player ship destroyed!');
         }
-        
-        return this.hull <= 0; // Return true if ship is destroyed
+
+        return isDestroyed;
+    }
+
+    destroyComponent(componentId) {
+        if (this.componentMeshes[componentId]) {
+            const meshes = this.componentMeshes[componentId];
+
+            // Remove all meshes belonging to this component
+            meshes.forEach(mesh => {
+                if (mesh.parent) {
+                    mesh.parent.remove(mesh);
+                    console.log(`Player ship component ${componentId} mesh "${mesh.name}" destroyed and removed`);
+                }
+            });
+
+            // Remove from tracking
+            delete this.componentHealth[componentId];
+            delete this.componentMeshes[componentId];
+
+            console.log(`Player ship component ${componentId} fully destroyed`);
+        }
     }
 }

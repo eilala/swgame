@@ -105,6 +105,10 @@ ws.onmessage = (event) => {
         handleEnemyDestruction(message.enemyId);
     } else if (message.type === 'playerDamaged') {
         handlePlayerDamage(message);
+    } else if (message.type === 'playerComponentDestroyed') {
+        handlePlayerComponentDestruction(message);
+    } else if (message.type === 'enemyComponentDestroyed') {
+        handleEnemyComponentDestruction(message);
     }
 };
 
@@ -130,6 +134,7 @@ function spawnOtherPlayer(playerData) {
             mesh.scale.set(0.5, 0.5, 0.5); // Scale same as local player ship
 
             // Traverse the model and set material properties for visibility
+            // Also assign component IDs to child meshes (same as BaseEnemy)
             mesh.traverse((child) => {
                 if (child.isMesh) {
                     // Ensure materials have proper settings for lighting
@@ -145,6 +150,27 @@ function spawnOtherPlayer(playerData) {
                             child.material.needsUpdate = true;
                         }
                     }
+
+                    // Assign component IDs based on mesh name (same logic as BaseEnemy)
+                    let componentId = null;
+                    if (child.name.includes('RightWing') || child.name === 'RightWing' ||
+                        (child.name.includes('001Wing') && child.position && child.position.x > 0)) {
+                        componentId = 'right_wing';
+                    } else if (child.name.includes('LeftWing') || child.name === 'LeftWing' ||
+                               (child.name.includes('001Wing') && child.position && child.position.x < 0)) {
+                        componentId = 'left_wing';
+                    } else if (child.name.includes('MainHull') || child.name === 'MainHull') {
+                        componentId = 'main_body';
+                    } else {
+                        componentId = 'main_body';
+                    }
+
+                    child.userData = child.userData || {};
+                    child.userData.componentId = componentId;
+                    child.userData.isPlayer = true;
+                    child.userData.playerId = playerData.id || playerData.playerId;
+
+                    console.log(`Other player ${playerData.name}: Assigned mesh "${child.name}" to component "${componentId}"`);
                 }
             });
 
@@ -152,15 +178,6 @@ function spawnOtherPlayer(playerData) {
             mesh.userData = mesh.userData || {};
             mesh.userData.isPlayer = true;
             mesh.userData.playerId = playerData.id || playerData.playerId;
-
-            // Mark all child meshes as player parts too
-            mesh.traverse((child) => {
-                if (child.isMesh) {
-                    child.userData = child.userData || {};
-                    child.userData.isPlayer = true;
-                    child.userData.playerId = playerData.id || playerData.playerId;
-                }
-            });
 
             scene.add(mesh);
 
@@ -384,12 +401,48 @@ function handlePlayerDamage(data) {
         player.ship.health = data.health;
         player.ship.shield = data.shield;
         player.ship.hull = data.health; // Assuming hull is health
+        player.ship.totalHullHealth = data.totalHullHealth || player.ship.totalHullHealth;
         player.isAlive = data.isAlive;
-        
+
+        // Update component health if provided
+        if (data.componentHealth) {
+            player.ship.componentHealth = { ...player.ship.componentHealth, ...data.componentHealth };
+        }
+
+        // Handle component-specific damage for other players
+        if (data.componentId && data.componentId !== null) {
+            console.log(`Applying component-specific damage to other player ${data.playerId}: componentId=${data.componentId}, damage=${data.damage || 10}`);
+            // Apply damage to the other player's component
+            if (playerObj.componentHealth && playerObj.componentHealth[data.componentId] !== undefined) {
+                playerObj.componentHealth[data.componentId] -= (data.damage || 10);
+                playerObj.componentHealth[data.componentId] = Math.max(0, playerObj.componentHealth[data.componentId]);
+                console.log(`Other player ${data.playerId} component ${data.componentId} health: ${playerObj.componentHealth[data.componentId]}`);
+
+                // Check if component should be destroyed
+                if (playerObj.componentHealth[data.componentId] <= 0) {
+                    console.log(`Other player ${data.playerId} component ${data.componentId} destroyed!`);
+                    // Visual destruction for other players would require server-side mesh manipulation
+                    // For now, we just track the health state
+                }
+            }
+        }
+
         // Update the last shield damage time to prevent immediate regeneration
         const currentTime = Date.now() / 1000; // Convert to seconds
         player.ship.lastShieldDamageTime = currentTime;
-        
+
+        // Apply component-specific damage if component was hit
+        if (data.componentId && player.ship.componentHealth[data.componentId] !== undefined) {
+            console.log(`Applying component-specific damage: componentId=${data.componentId}, damage=${data.damage || 10}`);
+            const destroyed = player.ship.takeDamage(data.damage || 10, data.componentId);
+            if (destroyed && !player.isAlive) {
+                // Handle player death locally
+                console.log('You died! Press R to respawn.');
+                // Hide the ship mesh
+                player.ship.mesh.visible = false;
+            }
+        }
+
         if (!data.isAlive) {
             // Handle player death locally
             console.log('You died! Press R to respawn.');
@@ -407,7 +460,14 @@ function handlePlayerDamage(data) {
             // Store health data for visual feedback (could change cube color based on health)
             playerObj.health = data.health;
             playerObj.shield = data.shield;
+            playerObj.totalHullHealth = data.totalHullHealth || playerObj.totalHullHealth || 100;
+            playerObj.componentHealth = data.componentHealth || playerObj.componentHealth || {
+                main_body: 100,
+                left_wing: 50,
+                right_wing: 50
+            };
             playerObj.isAlive = data.isAlive;
+
             if (!data.isAlive) {
                 // Could hide the player's ship or show explosion effect
                 playerObj.mesh.visible = false;
@@ -431,6 +491,13 @@ function handlePlayerRespawn(data) {
         player.ship.health = data.health;
         player.ship.shield = data.shield;
         player.ship.hull = data.health;
+        player.ship.totalHullHealth = data.totalHullHealth || 100;
+        // Reset component health on respawn
+        player.ship.componentHealth = {
+            main_body: 100,
+            left_wing: 50,
+            right_wing: 50
+        };
         player.isAlive = data.isAlive;
         player.position.set(data.x, data.y, data.z);
         player.quaternion.set(data.rotationX, data.rotationY, data.rotationZ, data.rotationW);
@@ -444,6 +511,12 @@ function handlePlayerRespawn(data) {
             playerObj.mesh.quaternion.set(data.rotationX, data.rotationY, data.rotationZ, data.rotationW);
             playerObj.health = data.health;
             playerObj.shield = data.shield;
+            playerObj.totalHullHealth = data.totalHullHealth || 100;
+            playerObj.componentHealth = data.componentHealth || {
+                main_body: 100,
+                left_wing: 50,
+                right_wing: 50
+            };
             playerObj.isAlive = data.isAlive;
             playerObj.mesh.visible = true;
             if (playerObj.nameSprite) {
@@ -452,6 +525,86 @@ function handlePlayerRespawn(data) {
         } else {
             // Player didn't exist, spawn them
             spawnOtherPlayer(data);
+        }
+    }
+}
+
+function handlePlayerComponentDestruction(data) {
+    const playerId = String(data.playerId);
+    const componentId = data.componentId;
+
+    console.log(`Received component destruction: playerId=${playerId}, componentId=${componentId}`);
+
+    if (playerId === String(myPlayerId)) {
+        // Local player component destroyed
+        console.log(`Local player component ${componentId} destroyed via network message`);
+        if (player.ship.componentHealth[componentId] !== undefined) {
+            player.ship.componentHealth[componentId] = 0;
+            player.ship.destroyComponent(componentId);
+            console.log(`Your ${componentId} was destroyed!`);
+        }
+    } else {
+        // Other player component destroyed
+        const playerObj = otherPlayers[playerId];
+        if (playerObj) {
+            if (playerObj.componentHealth && playerObj.componentHealth[componentId] !== undefined) {
+                playerObj.componentHealth[componentId] = 0;
+
+                // Visually destroy the component for other players
+                if (playerObj.mesh) {
+                    try {
+                        // Use direct children iteration instead of traverse to avoid issues
+                        const meshesToRemove = [];
+
+                        // Collect all children that match the component ID
+                        function collectMeshes(obj) {
+                            if (obj.children) {
+                                obj.children.forEach(child => {
+                                    if (child.isMesh && child.userData && child.userData.componentId === componentId) {
+                                        meshesToRemove.push(child);
+                                    }
+                                    // Recursively check nested children
+                                    collectMeshes(child);
+                                });
+                            }
+                        }
+
+                        collectMeshes(playerObj.mesh);
+
+                        // Remove all meshes for this component
+                        meshesToRemove.forEach(mesh => {
+                            console.log(`Removing component ${componentId} mesh "${mesh.name}" from other player ${playerObj.nameSprite?.userData?.name || 'Player'}`);
+                            if (mesh.parent) {
+                                mesh.parent.remove(mesh);
+                            }
+                        });
+
+                        console.log(`Removed ${meshesToRemove.length} meshes for component ${componentId}`);
+                    } catch (error) {
+                        console.warn('Error removing component meshes:', error);
+                    }
+                }
+
+                console.log(`${playerObj.nameSprite?.userData?.name || 'Player'}'s ${componentId} was destroyed!`);
+            }
+        }
+    }
+}
+
+function handleEnemyComponentDestruction(data) {
+    const enemyId = data.enemyId;
+    const componentId = data.componentId;
+
+    // Find the enemy and destroy the component
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        if (enemies[i].id === enemyId) {
+            const enemy = enemies[i];
+            if (enemy.componentHealth[componentId] !== undefined) {
+                enemy.componentHealth[componentId] = 0;
+                enemy.destroyComponent(componentId);
+                console.log(`Enemy ${enemyId}'s ${componentId} was destroyed!`);
+            }
+            break;
         }
     }
 }
@@ -633,6 +786,9 @@ function animate() {
 
             const intersects = raycaster.intersectObjects(collisionTargets, true);
 
+            // Collect all intersected objects for component-specific damage
+            const hitComponents = {};
+
             // Debug logging for raycasting - only log when there are intersections
             // if (intersects.length > 0) {
             //     console.log(`Raycasting found ${intersects.length} intersections for bolt at position ${bolt.mesh.position.x.toFixed(2)}, ${bolt.mesh.position.y.toFixed(2)}, ${bolt.mesh.position.z.toFixed(2)}`);
@@ -670,8 +826,16 @@ function animate() {
                         // Check if this hitObject is associated with this enemy
                         if (enemy.mesh === hitObject || hitObject.userData.enemyId === enemy.id) {
                             console.log(`Bolt hit enemy ${enemy.id} for ${bolt.damage} damage!`);
-                            // Damage the enemy
-                            const destroyed = enemy.takeDamage(bolt.damage);
+
+                            // Check if hit a specific component
+                            let componentId = null;
+                            if (hitObject.userData && hitObject.userData.componentId) {
+                                componentId = hitObject.userData.componentId;
+                                console.log(`Bolt hit specific component: ${componentId}`);
+                            }
+
+                            // Damage the enemy (with component-specific damage if applicable)
+                            const destroyed = enemy.takeDamage(bolt.damage, componentId);
 
                             // Remove the bolt
                             player.ship.primaryWeapon.bolts.splice(i, 1);
@@ -709,7 +873,25 @@ function animate() {
                         if (playerObj.mesh === hitObject || playerObj.mesh.userData.playerId === hitPlayerId || hitPlayerId === parseInt(playerId)) {
                             if (playerObj.isAlive) {
                                 console.log(`Local bolt hit player ${playerObj.nameSprite.userData?.name || 'Player'} (ID: ${playerId}) for ${bolt.damage} damage!`);
-                                // Damage the player
+
+                                // Check if hit a specific component
+                                let componentId = null;
+                                if (hitObject.userData && hitObject.userData.componentId) {
+                                    componentId = hitObject.userData.componentId;
+                                    console.log(`Local bolt hit player component: ${componentId} (mesh: ${hitObject.name})`);
+
+                                    // Apply damage to the component directly for other players
+                                    if (playerObj.componentHealth && playerObj.componentHealth[componentId] !== undefined) {
+                                        playerObj.componentHealth[componentId] -= bolt.damage;
+                                        playerObj.componentHealth[componentId] = Math.max(0, playerObj.componentHealth[componentId]);
+                                        console.log(`Other player ${playerId} component ${componentId} health now ${playerObj.componentHealth[componentId]}`);
+                                    }
+                                } else {
+                                    console.log(`DEBUG: hitObject.userData:`, hitObject.userData);
+                                    console.log(`DEBUG: hitObject.name: ${hitObject.name}`);
+                                }
+
+                                // Damage the player (with component-specific damage if applicable)
                                 player.ship.primaryWeapon.bolts.splice(i, 1);
                                 if (bolt.mesh && bolt.mesh.parent) {
                                     bolt.mesh.parent.remove(bolt.mesh);
@@ -719,13 +901,14 @@ function animate() {
                                 // Send player damage to server (don't hit own player)
                                 const targetId = parseInt(playerId);
                                 if (targetId !== bolt.ownerId) {
-                                    console.log(`Sending playerHit message: attackerPlayerId=${bolt.ownerId}, targetPlayerId=${targetId}, damage=${bolt.damage}`);
+                                    console.log(`Sending playerHit message: attackerPlayerId=${bolt.ownerId}, targetPlayerId=${targetId}, damage=${bolt.damage}, componentId=${componentId}`);
                                     if (ws.readyState === WebSocket.OPEN) {
                                         ws.send(JSON.stringify({
                                             type: 'playerHit',
                                             attackerPlayerId: bolt.ownerId,
                                             targetPlayerId: targetId,
-                                            damage: bolt.damage
+                                            damage: bolt.damage,
+                                            componentId: componentId
                                         }));
                                     }
                                 }
@@ -809,8 +992,16 @@ function animate() {
                         // Check if this hitObject is associated with this enemy
                         if (enemy.mesh === hitObject || hitObject.userData.enemyId === enemy.id) {
                             console.log(`Networked bolt hit enemy ${enemy.id} for 10 damage!`);
-                            // Damage the enemy
-                            const destroyed = enemy.takeDamage(10); // Assuming damage 10 for networked bolts
+
+                            // Check if hit a specific component
+                            let componentId = null;
+                            if (hitObject.userData && hitObject.userData.componentId) {
+                                componentId = hitObject.userData.componentId;
+                                console.log(`Networked bolt hit specific component: ${componentId}`);
+                            }
+
+                            // Damage the enemy (with component-specific damage if applicable)
+                            const destroyed = enemy.takeDamage(10, componentId); // Assuming damage 10 for networked bolts
 
                             // Remove the bolt
                             if (bolt.parent) {
@@ -848,7 +1039,18 @@ function animate() {
                         if (playerObj.mesh === hitObject || playerObj.mesh.userData.playerId === hitPlayerId || hitPlayerId === parseInt(playerId)) {
                             if (playerObj.isAlive) {
                                 console.log(`Networked bolt hit player ${playerObj.nameSprite.userData?.name || 'Player'} (ID: ${playerId}) for 10 damage!`);
-                                // Damage the player
+
+                                // Check if hit a specific component
+                                let componentId = null;
+                                if (hitObject.userData && hitObject.userData.componentId) {
+                                    componentId = hitObject.userData.componentId;
+                                    console.log(`Networked bolt hit player component: ${componentId} (mesh: ${hitObject.name})`);
+                                } else {
+                                    console.log(`DEBUG: hitObject.userData:`, hitObject.userData);
+                                    console.log(`DEBUG: hitObject.name: ${hitObject.name}`);
+                                }
+
+                                // Damage the player (with component-specific damage if applicable)
                                 if (bolt.parent) {
                                     bolt.parent.remove(bolt);
                                 }
@@ -858,13 +1060,14 @@ function animate() {
                                 // Send player damage to server (don't hit own player)
                                 const targetId = parseInt(playerId);
                                 if (targetId !== bolt.userData.ownerId) {
-                                    console.log(`Sending networked playerHit message: attackerPlayerId=${bolt.userData.ownerId}, targetPlayerId=${targetId}, damage=10`);
+                                    console.log(`Sending networked playerHit message: attackerPlayerId=${bolt.userData.ownerId}, targetPlayerId=${targetId}, damage=10, componentId=${componentId}`);
                                     if (ws.readyState === WebSocket.OPEN) {
                                         ws.send(JSON.stringify({
                                             type: 'playerHit',
                                             attackerPlayerId: bolt.userData.ownerId,
                                             targetPlayerId: targetId,
-                                            damage: 10 // Assuming damage 10 for networked bolts
+                                            damage: 10, // Assuming damage 10 for networked bolts
+                                            componentId: componentId
                                         }));
                                     }
                                 }

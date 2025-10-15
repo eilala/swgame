@@ -27,6 +27,11 @@ wss.on('connection', (ws) => {
         rotationX: 0, rotationY: 0, rotationZ: 0, rotationW: 1,
         health: 100, maxHealth: 100,
         shield: 100, maxShield: 100,
+        componentHealth: {
+            main_body: 100,
+            left_wing: 50,
+            right_wing: 50
+        },
         isAlive: true
     };
 
@@ -44,6 +49,7 @@ wss.on('connection', (ws) => {
             rotationX: players[id].rotationX, rotationY: players[id].rotationY, rotationZ: players[id].rotationZ, rotationW: players[id].rotationW,
             health: players[id].health, maxHealth: players[id].maxHealth,
             shield: players[id].shield, maxShield: players[id].maxShield,
+            componentHealth: players[id].componentHealth,
             isAlive: players[id].isAlive
         })),
         enemies: Object.values(enemies)
@@ -60,6 +66,11 @@ wss.on('connection', (ws) => {
                 rotationX: 0, rotationY: 0, rotationZ: 0, rotationW: 1,
                 health: 100, maxHealth: 100,
                 shield: 100, maxShield: 100,
+                componentHealth: {
+                    main_body: 100,
+                    left_wing: 50,
+                    right_wing: 50
+                },
                 isAlive: true
             }));
         }
@@ -111,6 +122,11 @@ wss.on('connection', (ws) => {
                 // Reset player stats
                 player.health = player.maxHealth;
                 player.shield = player.maxShield;
+                player.componentHealth = {
+                    main_body: 100,
+                    left_wing: 50,
+                    right_wing: 50
+                };
                 player.isAlive = true;
                 player.x = 0; // Reset to spawn position
                 player.y = 0;
@@ -133,6 +149,7 @@ wss.on('connection', (ws) => {
                             rotationX: player.rotationX, rotationY: player.rotationY, rotationZ: player.rotationZ, rotationW: player.rotationW,
                             health: player.health, maxHealth: player.maxHealth,
                             shield: player.shield, maxShield: player.maxShield,
+                            componentHealth: player.componentHealth,
                             isAlive: player.isAlive
                         }));
                     }
@@ -163,24 +180,54 @@ wss.on('connection', (ws) => {
                 return;
             }
             if (targetPlayer && targetPlayer.isAlive) {
-                // Apply damage to shield first, then health
-                let damage = message.damage;
-                if (targetPlayer.shield > 0) {
-                    const shieldDamage = Math.min(damage, targetPlayer.shield);
-                    targetPlayer.shield -= shieldDamage;
-                    damage -= shieldDamage;
-                    console.log(`Shield damage: ${shieldDamage}, remaining shield: ${targetPlayer.shield}`);
-                }
-                if (damage > 0) {
-                    targetPlayer.health -= damage;
-                    console.log(`Health damage: ${damage}, remaining health: ${targetPlayer.health}`);
+                // Check if hit a specific component
+                let componentId = message.componentId || null;
+                let componentDestroyed = false;
+
+                if (componentId && targetPlayer.componentHealth[componentId] !== undefined) {
+                    // Apply damage to the specific component
+                    targetPlayer.componentHealth[componentId] -= message.damage;
+                    targetPlayer.componentHealth[componentId] = Math.max(0, targetPlayer.componentHealth[componentId]);
+                    console.log(`Component ${componentId} health: ${targetPlayer.componentHealth[componentId]}`);
+
+                    // Check if component should be destroyed
+                    if (targetPlayer.componentHealth[componentId] <= 0) {
+                        componentDestroyed = true;
+                        console.log(`Player ${targetPlayer.name}'s ${componentId} was destroyed!`);
+
+                        // Broadcast component destruction to all clients
+                        wss.clients.forEach(client => {
+                            if (client.readyState === WebSocket.OPEN) {
+                                client.send(JSON.stringify({
+                                    type: 'playerComponentDestroyed',
+                                    playerId: message.targetPlayerId,
+                                    componentId: componentId
+                                }));
+                            }
+                        });
+                    }
                 }
 
-                // Check if player died
-                if (targetPlayer.health <= 0) {
-                    targetPlayer.isAlive = false;
-                    targetPlayer.health = 0;
-                    console.log(`Player ${targetPlayer.name} died!`);
+                // Apply damage to shield first, then health (only if no component was hit or component wasn't destroyed)
+                if (!componentId || !componentDestroyed) {
+                    let damage = message.damage;
+                    if (targetPlayer.shield > 0) {
+                        const shieldDamage = Math.min(damage, targetPlayer.shield);
+                        targetPlayer.shield -= shieldDamage;
+                        damage -= shieldDamage;
+                        console.log(`Shield damage: ${shieldDamage}, remaining shield: ${targetPlayer.shield}`);
+                    }
+                    if (damage > 0) {
+                        targetPlayer.health -= damage;
+                        console.log(`Health damage: ${damage}, remaining health: ${targetPlayer.health}`);
+                    }
+
+                    // Check if player died
+                    if (targetPlayer.health <= 0) {
+                        targetPlayer.isAlive = false;
+                        targetPlayer.health = 0;
+                        console.log(`Player ${targetPlayer.name} died!`);
+                    }
                 }
 
                 // Broadcast player damage to all clients
@@ -191,6 +238,7 @@ wss.on('connection', (ws) => {
                             playerId: message.targetPlayerId,
                             health: targetPlayer.health,
                             shield: targetPlayer.shield,
+                            componentHealth: targetPlayer.componentHealth,
                             isAlive: targetPlayer.isAlive
                         }));
                     }
