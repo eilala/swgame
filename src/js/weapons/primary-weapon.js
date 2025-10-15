@@ -25,6 +25,33 @@ export default class PrimaryWeapon {
         this.bolts = [];
         this.isFiring = false;
         this.fireTimer = 0; // For continuous firing
+
+        // Audio setup
+        this.audioLoaded = false;
+        this.audioBuffer = null;
+        this.loadAudio();
+    }
+
+    /**
+     * Loads the firing sound effect.
+     */
+    loadAudio() {
+        const audioLoader = new THREE.AudioLoader();
+        audioLoader.load(
+            'src/assets/sfx/bolt.ogg',
+            (buffer) => {
+                this.audioBuffer = buffer;
+                this.audioLoaded = true;
+                console.log('Laser sound loaded successfully');
+            },
+            (progress) => {
+                console.log('Loading laser sound...', (progress.loaded / progress.total * 100) + '%');
+            },
+            (error) => {
+                console.warn('Failed to load laser sound:', error);
+                this.audioLoaded = false;
+            }
+        );
     }
 
     /**
@@ -66,7 +93,53 @@ export default class PrimaryWeapon {
         // Send networked fire event
         this._sendNetworkFireEvent(firingPosition, direction);
 
+        // Play firing sound
+        this._playFiringSound(firingPosition);
+
         return true;
+    }
+
+    /**
+     * Plays the firing sound effect at the given position.
+     * @private
+     * @param {THREE.Vector3} position - Position where the sound should originate
+     */
+    _playFiringSound(position) {
+        if (!this.audioLoaded || !this.audioBuffer) {
+            return;
+        }
+
+        try {
+            // Get the audio listener from the global camera
+            const audioListener = window.camera?.audioListener;
+            if (!audioListener) {
+                console.warn('AudioListener not found on camera');
+                return;
+            }
+
+            // Create positional audio source
+            const sound = new THREE.PositionalAudio(audioListener);
+            sound.setBuffer(this.audioBuffer);
+            sound.setRefDistance(20); // Distance at which volume starts to attenuate
+            sound.setVolume(0.03); // Reduce volume to avoid being too loud
+
+            // Position the sound at the firing location
+            sound.position.copy(position);
+            scene.add(sound);
+
+            // Play the sound
+            sound.play();
+
+            // Clean up after sound finishes (with some buffer time)
+            setTimeout(() => {
+                if (sound.parent) {
+                    sound.parent.remove(sound);
+                }
+            }, 1000); // 1 second should be enough for most laser sounds
+
+        } catch (error) {
+            console.warn('Failed to play firing sound:', error);
+        }
     }
 
     /**

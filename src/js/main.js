@@ -29,10 +29,18 @@ let otherPlayers = {};
 
 // Scene
 const scene = new THREE.Scene();
+window.scene = scene; // Make scene globally available for weapon sounds
 
 // Camera
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.z = 5;
+
+// Audio listener attached to camera
+const audioListener = new THREE.AudioListener();
+camera.add(audioListener);
+
+// Make audioListener globally available for weapon sounds
+window.camera = { audioListener };
 
 // Renderer
 const renderer = new THREE.WebGLRenderer();
