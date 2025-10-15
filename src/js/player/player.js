@@ -76,8 +76,7 @@ export default class Player {
         // Handle primary weapon firing if the ship is set to fire
         if (this.ship.isFiringPrimary) {
             this.ship.firePrimaryWeapon(this);
-            // Reset the firing flag after firing once
-            this.ship.isFiringPrimary = false;
+            // Don't reset the firing flag - allow continuous firing
         }
     }
 }

@@ -5,5 +5,5 @@ const maps = [map1];
 export function loadRandomMap(scene) {
     const randomIndex = Math.floor(Math.random() * maps.length);
     const loadMap = maps[randomIndex];
-    loadMap(scene);
+    return loadMap(scene);
 }

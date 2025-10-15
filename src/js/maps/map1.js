@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import BaseEnemy from '../enemies/base-enemy.js';
 
 export default function(scene) {
     scene.background = new THREE.Color(0x000000);
@@ -18,4 +19,11 @@ export default function(scene) {
 
     const stars = new THREE.Points(starGeometry, starMaterial);
     scene.add(stars);
+
+    // Spawn an enemy cube at position (10, 0, 0)
+    const enemy = new BaseEnemy(new THREE.Vector3(10, 0, 0));
+    scene.add(enemy.mesh);
+
+    // Return enemies array for the main game loop
+    return [enemy];
 }

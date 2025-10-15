@@ -12,6 +12,16 @@ export default class Controls {
 
         document.addEventListener('keydown', (e) => {
             this.keys[e.code] = true;
+
+            // Handle respawn on R key press
+            if (e.code === 'KeyR') {
+                // Send respawn request
+                if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                    window.ws.send(JSON.stringify({
+                        type: 'respawn'
+                    }));
+                }
+            }
         });
 
         document.addEventListener('keyup', (e) => {
