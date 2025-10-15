@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import BaseEnemy from '../enemies/base-enemy.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import RAPIER from '@dimforge/rapier3d';
 
-export default function(scene) {
-    scene.background = new THREE.Color(0x000000);
+export default function(scene, world = null, staticObjects = null) {
+    scene.background = new THREE.Color(0x00000);
 
     const starGeometry = new THREE.BufferGeometry();
     const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.1 });
@@ -30,6 +31,11 @@ export default function(scene) {
             isdMesh.scale.set(0.5, 0.5, 0.5);
             isdMesh.position.set(200, 0, 0);
 
+            // Mark the main ISD mesh for collision detection
+            isdMesh.userData = isdMesh.userData || {};
+            isdMesh.userData.isStaticObject = true;
+            isdMesh.userData.isISD = true;
+
             // Traverse the model and set material properties for visibility
             isdMesh.traverse((child) => {
                 if (child.isMesh) {
@@ -46,12 +52,92 @@ export default function(scene) {
                             child.material.needsUpdate = true;
                         }
                     }
+
+                    // Mark all child meshes as ISD parts for collision detection
+                    child.userData = child.userData || {};
+                    child.userData.isStaticObject = true;
+                    child.userData.isISD = true;
+
+                    // Create physics colliders for each mesh in the ISD model
+                    if (world) {
+                        // Get the world matrix to compute accurate collider position
+                        const worldMatrix = child.matrixWorld;
+                        const position = new THREE.Vector3();
+                        const quaternion = new THREE.Quaternion();
+                        const scale = new THREE.Vector3();
+                        worldMatrix.decompose(position, quaternion, scale);
+
+                        // Create a static rigid body for the collider
+                        const rigidBodyDesc = RAPIER.RigidBodyDesc.fixed();
+                        const rigidBody = world.createRigidBody(rigidBodyDesc);
+
+                        // Set the position and rotation of the rigid body
+                        rigidBody.setTranslation(position, true);
+                        rigidBody.setRotation(quaternion, true);
+
+                        // Get the geometry of the mesh to create accurate colliders
+                        const geometry = child.geometry;
+                        if (geometry) {
+                            // For complex models, create compound colliders from individual triangles
+                            const positions = geometry.attributes.position;
+                            const indices = geometry.index;
+
+                            if (indices) {
+                                // Create triangle mesh collider
+                                const vertices = [];
+                                const indicesArray = [];
+
+                                // Collect vertices
+                                for (let i = 0; i < positions.count; i++) {
+                                    const vertex = new THREE.Vector3();
+                                    vertex.fromBufferAttribute(positions, i);
+                                    vertex.multiply(scale); // Apply scale
+                                    vertices.push(vertex.x, vertex.y, vertex.z);
+                                }
+
+                                // Collect indices
+                                for (let i = 0; i < indices.count; i++) {
+                                    indicesArray.push(indices.getX(i));
+                                }
+
+                                // Create triangle mesh collider
+                                const colliderDesc = RAPIER.ColliderDesc.trimesh(vertices, indicesArray);
+                                colliderDesc.setCollisionGroups(0b0100); // Static objects collision group
+                                world.createCollider(colliderDesc, rigidBody);
+                            } else {
+                                // Fallback: create bounding box collider
+                                const box = new THREE.Box3().setFromBufferAttribute(positions);
+                                const size = box.getSize(new THREE.Vector3());
+                                size.multiply(scale); // Apply scale
+                                const colliderDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+                                colliderDesc.setCollisionGroups(0b0100); // Static objects collision group
+                                world.createCollider(colliderDesc, rigidBody);
+                            }
+                        }
+
+                        // Store reference to the mesh for collision handling
+                        rigidBody.userData = {
+                            mesh: child,
+                            isStaticObject: true,
+                            isISD: true
+                        };
+                    }
                 }
             });
 
             // Add to scene after loading
             scene.add(isdMesh);
-            console.log('ISD model added to scene');
+            console.log('ISD model added to scene with physics colliders');
+
+            // Add to static objects array for collision detection if provided
+            if (staticObjects) {
+                // Add all mesh children of the ISD to the static objects array
+                isdMesh.traverse((child) => {
+                    if (child.isMesh) {
+                        staticObjects.push(child);
+                    }
+                });
+            }
         },
         undefined,
         (error) => {

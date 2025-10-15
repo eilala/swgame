@@ -59,7 +59,7 @@ export default class PrimaryWeapon {
         const direction = this._calculateFiringDirection(player, currentTime);
 
         // Create and configure bolt
-        const bolt = new BlasterBolt(firingPosition, direction, player.velocity, this.damage);
+        const bolt = new BlasterBolt(firingPosition, direction, player.velocity, this.damage, this.ship.world);
         bolt.setOwnerId(window.myPlayerId || 0);
         this.bolts.push(bolt);
 

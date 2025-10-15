@@ -1,11 +1,23 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import RAPIER from '@dimforge/rapier3d';
 import Player from './player/player.js';
 import { loadRandomMap } from './maps/map-loader.js';
 import Controls from './controls.js';
 import PlayerCamera from './camera/player-camera.js';
 import UI from './ui.js';
 import BaseEnemy from './enemies/base-enemy.js';
+
+// Initialize Rapier physics
+let world = null;
+
+async function initializeRapier() {
+     // Initialize Rapier WASM module
+     // RAPIER is already initialized in this version
+     console.log('Initializing Rapier world...');
+     world = new RAPIER.World({ x: 0.0, y: 0.0, z: 0.0 });
+     console.log('Rapier.js physics world initialized:', world);
+ }
 
 // WebSocket connection
 const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
@@ -41,11 +53,19 @@ scene.add(directionalLight);
 const networkedBolts = [];
 const enemies = [];
 
+// Physics bodies map for collision handling
+const physicsBodies = new Map();
+window.world = world; // Make world globally available
+window.RAPIER = RAPIER; // Make RAPIER globally available for other scripts
+
+// Initialize Rapier before setting up the game
+await initializeRapier();
+
 // Load Map
-loadRandomMap(scene);
+loadRandomMap(scene, world);
 
 // Player
-const player = new Player(scene);
+const player = new Player(scene, world);
 // Note: player.ship.mesh will be added to scene in the GLTF loader callback within BaseShip constructor
 
 // WebSocket event handlers
@@ -94,10 +114,6 @@ ws.onclose = () => {
 
 function spawnOtherPlayer(playerData) {
     const playerId = String(playerData.id || playerData.playerId);
-    if (playerId === 'null' || playerId === 'undefined' || playerId === '') {
-        console.log('Invalid playerId, skipping spawn', playerData);
-        return;
-    }
 
     if (otherPlayers[playerId]) {
         return;
@@ -136,7 +152,7 @@ function spawnOtherPlayer(playerData) {
             mesh.userData = mesh.userData || {};
             mesh.userData.isPlayer = true;
             mesh.userData.playerId = playerData.id || playerData.playerId;
-            
+
             // Mark all child meshes as player parts too
             mesh.traverse((child) => {
                 if (child.isMesh) {
@@ -147,6 +163,9 @@ function spawnOtherPlayer(playerData) {
             });
 
             scene.add(mesh);
+
+            // Create physics body for this player
+            createPlayerRigidBody(mesh, false);
 
             // Create name label positioned above the model's bounding box
             const canvas = document.createElement('canvas');
@@ -226,6 +245,9 @@ function spawnOtherPlayer(playerData) {
                 }
             });
 
+            // Create physics body for this player (fallback case)
+            createPlayerRigidBody(mesh, false);
+
             otherPlayers[playerId] = {
                 mesh,
                 nameSprite: sprite,
@@ -289,9 +311,36 @@ function removeOtherPlayer(playerId) {
 }
 
 function spawnEnemy(enemyData) {
-    const enemy = new BaseEnemy(scene, new THREE.Vector3(enemyData.x, enemyData.y, enemyData.z), 50, 25, enemyData.id);
+    const enemy = new BaseEnemy(scene, world, new THREE.Vector3(enemyData.x, enemyData.y, enemyData.z), 50, 25, enemyData.id);
     enemies.push(enemy);
     // Note: enemy.mesh will be added to scene in the GLTF loader callback within BaseEnemy constructor
+}
+
+// Create physics rigid body for player ships
+function createPlayerRigidBody(mesh, isLocalPlayer = false) {
+    if (!world) return null;
+
+    // Create a kinematic rigid body for ships (controlled by game logic)
+    const rigidBodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased();
+    const rigidBody = world.createRigidBody(rigidBodyDesc);
+
+    // Create a collider based on the mesh's bounding box
+    const box = new THREE.Box3().setFromObject(mesh);
+    const size = box.getSize(new THREE.Vector3());
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+    colliderDesc.setCollisionGroups(isLocalPlayer ? 0b0001 : 0b0010); // Different collision groups for local vs other players
+    const collider = world.createCollider(colliderDesc, rigidBody);
+
+    // Store reference to the mesh and other data
+    rigidBody.userData = {
+        mesh: mesh,
+        isPlayer: true,
+        isLocalPlayer: isLocalPlayer,
+        playerId: isLocalPlayer ? myPlayerId : mesh.userData?.playerId
+    };
+
+    physicsBodies.set(mesh, rigidBody);
+    return rigidBody;
 }
 function handleNetworkedFire(data) {
     // Create a networked blaster bolt
@@ -336,6 +385,11 @@ function handlePlayerDamage(data) {
         player.ship.shield = data.shield;
         player.ship.hull = data.health; // Assuming hull is health
         player.isAlive = data.isAlive;
+        
+        // Update the last shield damage time to prevent immediate regeneration
+        const currentTime = Date.now() / 1000; // Convert to seconds
+        player.ship.lastShieldDamageTime = currentTime;
+        
         if (!data.isAlive) {
             // Handle player death locally
             console.log('You died! Press R to respawn.');
@@ -437,6 +491,12 @@ function animate() {
         player.ship.update(player, cappedDeltaTime);
         playerCamera.update();
         ui.update();
+        
+        // Detect and resolve collisions between all meshes
+        detectAndResolveCollisions();
+
+        // Handle ISD collision detection and response
+        handleISDCollisions();
 
         // Send position updates if connected
         if (ws.readyState === WebSocket.OPEN && myPlayerId !== null) {
@@ -547,6 +607,14 @@ function animate() {
             if (playerObj.mesh && playerObj.isAlive && playerObj.mesh.parent) collisionTargets.push(playerObj.mesh);
         });
 
+        // Update physics simulation
+        if (world) {
+            world.step();
+
+            // Handle collisions using Rapier event system
+            handleRapierCollisions();
+        }
+
         // Collision detection: Check for collisions between blaster bolts and targets using raycasting
         // Check local bolts - limit processing to prevent freezing
         const maxLocalBoltsToProcess = 20; // Limit to prevent too many collision checks at once
@@ -565,15 +633,10 @@ function animate() {
 
             const intersects = raycaster.intersectObjects(collisionTargets, true);
 
-            // Debug logging for raycasting
-            if (intersects.length > 0) {
-                console.log(`Raycasting found ${intersects.length} intersections for bolt at position ${bolt.mesh.position.x.toFixed(2)}, ${bolt.mesh.position.y.toFixed(2)}, ${bolt.mesh.position.z.toFixed(2)}`);
-            } else {
-                // Only log if there are no intersections after a certain time to reduce spam
-                if (bolt.age > 0.5 && bolt.age % 0.5 < 0.016) { // Log approximately every 0.5 seconds
-                    console.log(`No intersections found for bolt at position ${bolt.mesh.position.x.toFixed(2)}, ${bolt.mesh.position.y.toFixed(2)}, ${bolt.mesh.position.z.toFixed(2)}, distance: ${distance.toFixed(2)}`);
-                }
-            }
+            // Debug logging for raycasting - only log when there are intersections
+            // if (intersects.length > 0) {
+            //     console.log(`Raycasting found ${intersects.length} intersections for bolt at position ${bolt.mesh.position.x.toFixed(2)}, ${bolt.mesh.position.y.toFixed(2)}, ${bolt.mesh.position.z.toFixed(2)}`);
+            // }
 
             let hitSomething = false;
             for (const intersect of intersects) {
@@ -695,15 +758,10 @@ function animate() {
 
             const intersects = raycaster.intersectObjects(collisionTargets, true);
 
-            // Debug logging for raycasting
-            if (intersects.length > 0) {
-                console.log(`Networked raycasting found ${intersects.length} intersections for bolt at position ${bolt.position.x.toFixed(2)}, ${bolt.position.y.toFixed(2)}, ${bolt.position.z.toFixed(2)}`);
-            } else {
-                // Only log if there are no intersections after a certain time to reduce spam
-                if (bolt.userData.age > 0.5 && bolt.userData.age % 0.5 < 0.016) { // Log approximately every 0.5 seconds
-                    console.log(`No intersections found for networked bolt at position ${bolt.position.x.toFixed(2)}, ${bolt.position.y.toFixed(2)}, ${bolt.position.z.toFixed(2)}, distance: ${distance.toFixed(2)}`);
-                }
-            }
+            // Debug logging for raycasting - only log when there are intersections
+            // if (intersects.length > 0) {
+            //     console.log(`Networked raycasting found ${intersects.length} intersections for bolt at position ${bolt.position.x.toFixed(2)}, ${bolt.position.y.toFixed(2)}, ${bolt.position.z.toFixed(2)}`);
+            // }
 
             let hitSomething = false;
             for (const intersect of intersects) {
@@ -720,6 +778,10 @@ function animate() {
                 if ((hitObject === player.ship.mesh || (hitObject.userData && hitObject.userData.isPlayer)) &&
                     !(bolt.userData.ownerId === myPlayerId && bolt.userData.age < 0.2)) { // Don't damage self during grace period
                     console.log("Networked bolt hit player's own ship");
+                    // Update the last shield damage time to prevent immediate regeneration
+                    const currentTime = Date.now() / 1000; // Convert to seconds
+                    player.ship.lastShieldDamageTime = currentTime;
+                    
                     // Send damage to server
                     console.log(`Networked bolt from player ${bolt.userData.ownerId} hit local player for 10 damage!`);
                     if (ws.readyState === WebSocket.OPEN) {
@@ -855,6 +917,341 @@ function checkCollision(mesh1, mesh2) {
         console.log('Collision detected between:', mesh1.userData, 'and', mesh2.userData);
     }
     return intersects;
+}
+
+// Simple collision detection for player-to-player and player-to-enemy collisions only
+function detectAndResolveCollisions() {
+    // Check collisions between local player and other players
+    Object.values(otherPlayers).forEach(playerObj => {
+        if (playerObj.mesh && playerObj.isAlive && player.ship.mesh) {
+            if (simpleSphereCollisionCheck(player.ship.mesh, playerObj.mesh)) {
+                resolveSimpleCollision(player.ship.mesh, playerObj.mesh);
+            }
+        }
+    });
+
+    // Check collisions between local player and enemies
+    enemies.forEach(enemy => {
+        if (enemy.mesh && player.ship.mesh) {
+            if (simpleSphereCollisionCheck(player.ship.mesh, enemy.mesh)) {
+                resolveSimpleCollision(player.ship.mesh, enemy.mesh);
+            }
+        }
+    });
+
+    // Check collisions between other players and enemies
+    Object.values(otherPlayers).forEach(playerObj => {
+        if (playerObj.mesh && playerObj.isAlive) {
+            enemies.forEach(enemy => {
+                if (enemy.mesh) {
+                    if (simpleSphereCollisionCheck(playerObj.mesh, enemy.mesh)) {
+                        resolveSimpleCollision(playerObj.mesh, enemy.mesh);
+                    }
+                }
+            });
+        }
+    });
+
+    // Check collisions between other players
+    const otherPlayerMeshes = Object.values(otherPlayers)
+        .filter(playerObj => playerObj.mesh && playerObj.isAlive)
+        .map(playerObj => playerObj.mesh);
+
+    for (let i = 0; i < otherPlayerMeshes.length; i++) {
+        for (let j = i + 1; j < otherPlayerMeshes.length; j++) {
+            if (simpleSphereCollisionCheck(otherPlayerMeshes[i], otherPlayerMeshes[j])) {
+                resolveSimpleCollision(otherPlayerMeshes[i], otherPlayerMeshes[j]);
+            }
+        }
+    }
+}
+
+// Handle ISD collision detection specifically
+function handleISDCollisions() {
+    if (!player || !player.ship || !player.ship.mesh) return;
+
+    // Use raycasting for very accurate collision detection with the ISD model
+    const playerPosition = player.ship.mesh.position;
+
+    // Find ISD meshes in the scene
+    const isdMeshes = [];
+    scene.traverse((child) => {
+        if (child.userData && child.userData.isStaticObject && child.userData.isISD) {
+            isdMeshes.push(child);
+        }
+    });
+
+    if (isdMeshes.length === 0) return;
+
+    // Check multiple directions for proximity to surfaces
+    const checkDirections = [
+        new THREE.Vector3(1, 0, 0),   // Right
+        new THREE.Vector3(-1, 0, 0),  // Left
+        new THREE.Vector3(0, 1, 0),   // Up
+        new THREE.Vector3(0, -1, 0),  // Down
+        new THREE.Vector3(0, 0, 1),   // Forward
+        new THREE.Vector3(0, 0, -1),  // Back
+    ];
+
+    let minDistance = Infinity;
+    let closestNormal = new THREE.Vector3();
+    let needsCorrection = false;
+
+    // Check if player is getting too close to surfaces
+    for (const direction of checkDirections) {
+        const raycaster = new THREE.Raycaster(playerPosition, direction, 0, 4); // Check within 4 units
+        const intersects = raycaster.intersectObjects(isdMeshes, true);
+
+        if (intersects.length > 0) {
+            const intersection = intersects[0];
+            if (intersection.distance < minDistance) {
+                minDistance = intersection.distance;
+                needsCorrection = true;
+                if (intersection.face) {
+                    closestNormal.copy(intersection.face.normal);
+                    closestNormal.transformDirection(intersection.object.matrixWorld);
+                } else {
+                    closestNormal.copy(direction);
+                }
+            }
+        }
+    }
+
+    // Smoothly interpolate position correction
+    if (needsCorrection && minDistance < 2.8) { // Within 2.8 units - getting close
+        // Calculate desired safe distance
+        const safeDistance = 3.0;
+        const correctionNeeded = safeDistance - minDistance;
+
+        if (correctionNeeded > 0) {
+            // Interpolate the correction over time for smoothness
+            const interpolationFactor = 0.3; // Adjust for smoothness (0.1 = very smooth, 1.0 = instant)
+            const interpolatedCorrection = correctionNeeded * interpolationFactor;
+
+            // Apply smooth correction
+            const correctionVector = closestNormal.clone().multiplyScalar(interpolatedCorrection);
+            player.ship.mesh.position.add(correctionVector);
+            player.position.copy(player.ship.mesh.position);
+
+            // Gradually reduce velocity toward the surface
+            const normalDotVelocity = player.velocity.dot(closestNormal);
+            if (normalDotVelocity > 0) {
+                // Gradually remove the component moving toward the surface
+                const velocityReduction = Math.min(normalDotVelocity * 0.3, normalDotVelocity);
+                const velocityCorrection = closestNormal.clone().multiplyScalar(velocityReduction);
+                player.velocity.sub(velocityCorrection);
+            }
+
+            // Update physics body with interpolated values
+            if (player.ship.rigidBody) {
+                player.ship.rigidBody.setTranslation(player.ship.mesh.position, true);
+                player.ship.rigidBody.setLinvel({
+                    x: player.velocity.x,
+                    y: player.velocity.y,
+                    z: player.velocity.z
+                }, true);
+            }
+        }
+    }
+}
+
+// Simple sphere-based collision check
+function simpleSphereCollisionCheck(mesh1, mesh2) {
+    // Get world positions of both meshes
+    const pos1 = new THREE.Vector3();
+    const pos2 = new THREE.Vector3();
+    mesh1.getWorldPosition(pos1);
+    mesh2.getWorldPosition(pos2);
+    
+    // Calculate distance between centers
+    const distance = pos1.distanceTo(pos2);
+    
+    // Use a fixed collision radius based on the scale of the objects
+    const scale1 = new THREE.Vector3();
+    const scale2 = new THREE.Vector3();
+    mesh1.getWorldScale(scale1);
+    mesh2.getWorldScale(scale2);
+    
+    // Average scale factor to determine collision threshold
+    const avgScale = (Math.max(scale1.x, scale1.y, scale1.z) + Math.max(scale2.x, scale2.y, scale2.z)) / 2;
+    const collisionThreshold = avgScale * 1.5; // Adjust this value as needed
+    
+    return distance < collisionThreshold;
+}
+
+// Simple collision resolution
+function resolveSimpleCollision(mesh1, mesh2) {
+    // Get world positions of both meshes
+    const pos1 = new THREE.Vector3();
+    const pos2 = new THREE.Vector3();
+    mesh1.getWorldPosition(pos1);
+    mesh2.getWorldPosition(pos2);
+    
+    // Calculate the direction from mesh1 to mesh2
+    const direction = new THREE.Vector3().subVectors(pos2, pos1).normalize();
+    
+    // Calculate current distance
+    const currentDistance = pos1.distanceTo(pos2);
+    
+    // Calculate minimum separation distance
+    const scale1 = new THREE.Vector3();
+    const scale2 = new THREE.Vector3();
+    mesh1.getWorldScale(scale1);
+    mesh2.getWorldScale(scale2);
+    const avgScale = (Math.max(scale1.x, scale1.y, scale1.z) + Math.max(scale2.x, scale2.y, scale2.z)) / 2;
+    const minDistance = avgScale * 1.5;
+    
+    // Only resolve if objects are too close
+    if (currentDistance < minDistance) {
+        // Calculate how much to separate
+        const overlap = minDistance - currentDistance;
+        const moveDistance = overlap / 2; // Move each object half the distance
+        
+        // Move mesh1 away from mesh2
+        const offset1 = direction.clone().multiplyScalar(-moveDistance);
+        mesh1.position.add(offset1);
+        
+        // Move mesh2 away from mesh1
+        const offset2 = direction.clone().multiplyScalar(moveDistance);
+        mesh2.position.add(offset2);
+    }
+}
+
+// Handle collisions using Rapier.js event system
+function handleRapierCollisions() {
+    if (!world) return;
+
+    // Use the correct Rapier API for handling collisions in version 0.19
+    try {
+        // Check for intersections manually using contact pairs
+        world.forEachCollider((collider) => {
+            const body = collider.parent();
+            const userData = body.userData || {};
+
+            // Only check player colliders
+            if (userData.isPlayer) {
+                // Check intersection with ISD colliders
+                world.forEachCollider((isdCollider) => {
+                    const isdBody = isdCollider.parent();
+                    const isdUserData = isdBody.userData || {};
+
+                    if (isdUserData.isISD && collider !== isdCollider) {
+                        // Check if these colliders are intersecting using narrow phase
+                        const contact = world.narrowPhase.contactPair(collider, isdCollider);
+
+                        if (contact && contact.hasAnyActiveContact) {
+                            console.log('Player collided with ISD!');
+
+                            // Get the player's mesh for position correction
+                            const playerMesh = userData.mesh;
+
+                            if (playerMesh) {
+                                // Simple collision response: push player away from ISD
+                                const isdPos = isdBody.translation();
+                                const playerPos = body.translation();
+
+                                // Calculate direction from ISD to player
+                                const direction = {
+                                    x: playerPos.x - isdPos.x,
+                                    y: playerPos.y - isdPos.y,
+                                    z: playerPos.z - isdPos.z
+                                };
+
+                                // Normalize direction
+                                const length = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+                                if (length > 0) {
+                                    direction.x /= length;
+                                    direction.y /= length;
+                                    direction.z /= length;
+                                }
+
+                                // Push player away by a small amount
+                                const pushDistance = 2.0; // Adjust as needed
+                                playerMesh.position.x += direction.x * pushDistance;
+                                playerMesh.position.y += direction.y * pushDistance;
+                                playerMesh.position.z += direction.z * pushDistance;
+
+                                // Also update the rigid body position
+                                body.setTranslation({
+                                    x: playerMesh.position.x,
+                                    y: playerMesh.position.y,
+                                    z: playerMesh.position.z
+                                }, true);
+
+                                console.log('Pushed player away from ISD');
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    } catch (error) {
+        console.warn('Rapier collision handling error:', error);
+        // Fallback: use simple distance-based collision detection
+        handleSimpleCollisionDetection();
+    }
+}
+
+// Fallback collision detection using simple distance checks
+function handleSimpleCollisionDetection() {
+    // Get all collision targets including ISD meshes
+    const collisionTargets = [];
+
+    // Add ISD meshes (they should be marked as static objects)
+    scene.traverse((child) => {
+        if (child.userData && child.userData.isStaticObject && child.userData.isISD) {
+            collisionTargets.push(child);
+        }
+    });
+
+    // Check player collision with ISD
+    if (player && player.ship && player.ship.mesh) {
+        const playerPos = player.ship.mesh.position;
+
+        collisionTargets.forEach(target => {
+            // Use bounding box intersection for more accurate collision detection
+            const playerBox = new THREE.Box3().setFromObject(player.ship.mesh);
+            const targetBox = new THREE.Box3().setFromObject(target);
+
+            if (playerBox.intersectsBox(targetBox)) {
+                console.log('Player intersecting with ISD, pushing away');
+
+                // Calculate the intersection depth and direction
+                const intersection = new THREE.Box3().setFromObject(target);
+                intersection.intersect(playerBox);
+
+                // Get the center of the intersection
+                const intersectionCenter = intersection.getCenter(new THREE.Vector3());
+
+                // Calculate direction from ISD center to player
+                const direction = new THREE.Vector3()
+                    .subVectors(playerPos, target.position)
+                    .normalize();
+
+                // Calculate push distance based on bounding box sizes
+                const playerSize = playerBox.getSize(new THREE.Vector3());
+                const targetSize = targetBox.getSize(new THREE.Vector3());
+
+                // Use the maximum dimension for push distance
+                const maxPlayerDim = Math.max(playerSize.x, playerSize.y, playerSize.z);
+                const maxTargetDim = Math.max(targetSize.x, targetSize.y, targetSize.z);
+                const pushDistance = (maxPlayerDim + maxTargetDim) / 2 + 1.0;
+
+                // Push player away
+                player.ship.mesh.position.add(direction.multiplyScalar(pushDistance));
+
+                // Update player's logical position
+                player.position.copy(player.ship.mesh.position);
+
+                // Update physics body if it exists
+                if (player.ship.rigidBody) {
+                    player.ship.rigidBody.setTranslation(player.ship.mesh.position, true);
+                }
+
+                console.log(`Pushed player by ${pushDistance} units`);
+            }
+        });
+    }
 }
 
 animate();

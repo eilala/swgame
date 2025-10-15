@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as RAPIER from '@dimforge/rapier3d';
 
 /**
  * Represents a blaster bolt projectile with physics and visual representation.
@@ -12,11 +13,13 @@ export default class BlasterBolt {
      * @param {THREE.Vector3} shipVelocity - Velocity of the firing ship
      * @param {number} damage - Damage dealt on impact (default: 10)
      */
-    constructor(position, direction, shipVelocity, damage = 10) {
+    constructor(position, direction, shipVelocity, damage = 10, world = null) {
         // Validate input parameters
         if (!position || !direction || !shipVelocity) {
             throw new Error('BlasterBolt constructor requires position, direction, and shipVelocity');
         }
+
+        this.world = world; // Store world reference
 
         this.damage = damage;
         this.ownerId = null; // Will be set by primary weapon
@@ -37,6 +40,9 @@ export default class BlasterBolt {
             damage: this.damage,
             age: this.age
         };
+
+        // Create physics body
+        this.createPhysicsBody();
     }
 
     /**
@@ -51,6 +57,39 @@ export default class BlasterBolt {
         });
 
         this.mesh = new THREE.Mesh(geometry, material);
+    }
+
+    /**
+     * Creates physics body for collision detection.
+     */
+    createPhysicsBody() {
+        if (!this.world) {
+            console.error('World not available for blaster bolt physics body creation');
+            return;
+        }
+
+        // Create a kinematic rigid body for the bolt (controlled by game logic)
+        const rigidBodyDesc = window.RAPIER.RigidBodyDesc.kinematicPositionBased();
+        this.rigidBody = this.world.createRigidBody(rigidBodyDesc);
+
+        // Create a small collider for the bolt
+        const colliderDesc = window.RAPIER.ColliderDesc.cuboid(0.05, 0.25, 0.05); // Small collision box
+        colliderDesc.setCollisionGroups(0b1000); // Projectile collision group
+        this.collider = this.world.createCollider(colliderDesc, this.rigidBody);
+
+        // Store reference to the mesh and other data
+        this.rigidBody.userData = {
+            mesh: this.mesh,
+            isBlasterBolt: true,
+            ownerId: this.ownerId,
+            damage: this.damage
+        };
+
+        // Position the rigid body at the mesh's position
+        this.rigidBody.setTranslation(this.mesh.position, true);
+        this.rigidBody.setRotation(this.mesh.quaternion, true);
+
+        // console.log('Physics body created for blaster bolt');
     }
 
     /**
@@ -105,6 +144,12 @@ export default class BlasterBolt {
 
         // Update mesh userData for collision detection
         this.mesh.userData.age = this.age;
+
+        // Update physics body position and rotation
+        if (this.rigidBody) {
+            this.rigidBody.setTranslation(this.mesh.position, true);
+            this.rigidBody.setRotation(this.mesh.quaternion, true);
+        }
 
         return false;
     }

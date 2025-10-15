@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import * as RAPIER from '@dimforge/rapier3d';
 import PrimaryWeapon from '../weapons/primary-weapon.js';
 
 export default class BaseShip {
-    constructor(scene) {
+    constructor(scene, world) {
         this.scene = scene;
+        this.world = world; // Store world reference
         this.mesh = null; // Initialize as null until loaded
         this.modelLoaded = false; // Track loading state
         
@@ -39,7 +41,7 @@ export default class BaseShip {
                 this.scene.add(this.mesh);
                 this.modelLoaded = true; // Mark as loaded
                 console.log('Player ship model added to scene');
-                
+
                 // Mark all child meshes as player ship parts too
                 this.mesh.traverse((child) => {
                     if (child.isMesh) {
@@ -48,6 +50,9 @@ export default class BaseShip {
                         child.userData.playerId = window.myPlayerId || 0; // Set player ID for the local player
                     }
                 });
+
+                // Create physics body for the player ship
+                this.createPhysicsBody();
             },
             undefined,
             (error) => {
@@ -83,6 +88,12 @@ export default class BaseShip {
         this.energyDrainTimeout = 2; // Seconds to wait before regeneration starts
         this.lastEnergyActionTime = 0; // Time of last energy action
         this.energyRegenerationStartTime = 0; // Time when regeneration should start
+        
+        // Shield regeneration properties
+        this.shieldRegenerationRate = 5; // Shield points per second
+        this.shieldDrainTimeout = 3; // Seconds to wait after taking damage before regeneration starts
+        this.lastShieldDamageTime = 0; // Time of last shield damage
+        this.shieldRegenerationStartTime = 0; // Time when shield regeneration should start
 
         // Constants (scaled for per-second physics at 60 FPS, further increased for responsiveness)
         this.acceleration = 10; // Further increased from 1.8 for even faster acceleration
@@ -97,6 +108,38 @@ export default class BaseShip {
 
         // Firing state flags
         this.isFiringPrimary = false;
+    }
+
+    createPhysicsBody() {
+        if (!this.world) {
+            console.error('World not available for physics body creation');
+            return;
+        }
+
+        // Create a kinematic rigid body for the ship (controlled by game logic)
+        const rigidBodyDesc = window.RAPIER.RigidBodyDesc.kinematicPositionBased();
+        this.rigidBody = this.world.createRigidBody(rigidBodyDesc);
+
+        // Create a collider based on the mesh's bounding box
+        const box = new THREE.Box3().setFromObject(this.mesh);
+        const size = box.getSize(new THREE.Vector3());
+        const colliderDesc = window.RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+        colliderDesc.setCollisionGroups(0b0001); // Local player collision group
+        this.collider = this.world.createCollider(colliderDesc, this.rigidBody);
+
+        // Store reference to the mesh and other data
+        this.rigidBody.userData = {
+            mesh: this.mesh,
+            isPlayer: true,
+            isLocalPlayer: true,
+            playerId: window.myPlayerId || 0
+        };
+
+        // Position the rigid body at the mesh's position
+        this.rigidBody.setTranslation(this.mesh.position, true);
+        this.rigidBody.setRotation(this.mesh.quaternion, true);
+
+        console.log('Physics body created for player ship');
     }
 
     update(player, deltaTime) {
@@ -118,10 +161,43 @@ export default class BaseShip {
         const targetQuaternion = player.quaternion;
         const step = this.turnSpeed * cappedDeltaTime;
         this.mesh.quaternion.rotateTowards(targetQuaternion, step);
+
+        // Update physics body position and rotation
+        if (this.rigidBody) {
+            this.rigidBody.setTranslation(this.mesh.position, true);
+            this.rigidBody.setRotation(this.mesh.quaternion, true);
+        }
     }
     
     // Method to fire the primary weapon
     firePrimaryWeapon(player) {
         return this.primaryWeapon.fire(player);
+    }
+    
+    // Method to handle taking damage
+    takeDamage(damage) {
+        // Update the last shield damage time
+        const currentTime = Date.now() / 1000; // Convert to seconds
+        this.lastShieldDamageTime = currentTime;
+        
+        // Apply damage to shield first, then hull
+        if (this.shield > 0) {
+            const shieldDamage = Math.min(damage, this.shield);
+            this.shield -= shieldDamage;
+            damage -= shieldDamage;
+            console.log(`Shield damage: ${shieldDamage}, remaining shield: ${this.shield}`);
+        }
+        
+        if (damage > 0) {
+            this.hull -= damage;
+            console.log(`Hull damage: ${damage}, remaining hull: ${this.hull}`);
+        }
+        
+        // If hull is below 0, clamp it to 0
+        if (this.hull < 0) {
+            this.hull = 0;
+        }
+        
+        return this.hull <= 0; // Return true if ship is destroyed
     }
 }

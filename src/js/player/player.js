@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import BaseShip from '../ships/base-ship.js';
 
 export default class Player {
-    constructor(scene) {
-        this.ship = new BaseShip(scene);
+    constructor(scene, world) {
+        this.ship = new BaseShip(scene, world);
 
         // Physics properties
         this.position = new THREE.Vector3();
@@ -70,6 +70,21 @@ export default class Player {
                 // Ensure energy doesn't exceed maximum
                 if (this.ship.energy > this.ship.maxEnergy) {
                     this.ship.energy = this.ship.maxEnergy;
+                }
+            }
+        }
+
+        // Shield regeneration logic
+        // If shield is below max and we've waited long enough after taking damage
+        if (this.ship.shield < this.ship.maxShield) {
+            // Check if we've waited long enough to start regeneration
+            if (currentTime - this.ship.lastShieldDamageTime >= this.ship.shieldDrainTimeout) {
+                // Regenerate shield using the regeneration rate
+                this.ship.shield += this.ship.shieldRegenerationRate * cappedDeltaTime;
+
+                // Ensure shield doesn't exceed maximum
+                if (this.ship.shield > this.ship.maxShield) {
+                    this.ship.shield = this.ship.maxShield;
                 }
             }
         }

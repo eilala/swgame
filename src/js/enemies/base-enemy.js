@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import * as RAPIER from '@dimforge/rapier3d';
 
 export default class BaseEnemy {
-    constructor(scene, position = new THREE.Vector3(0, 0, 0), health = 50, shield = 25, id = null) {
+    constructor(scene, world, position = new THREE.Vector3(0, 0, 0), health = 50, shield = 25, id = null) {
+        this.world = world; // Store world reference
         // Stats
         this.health = health;
         this.maxHealth = health;
@@ -65,6 +67,9 @@ export default class BaseEnemy {
                         child.userData.enemyId = this.id;
                     }
                 });
+
+                // Create physics body for the enemy
+                this.createPhysicsBody();
             },
             undefined,
             (error) => {
@@ -86,6 +91,9 @@ export default class BaseEnemy {
                         child.userData.enemyId = this.id;
                     }
                 });
+
+                // Create physics body for the enemy (fallback case)
+                this.createPhysicsBody();
             }
         );
     }
@@ -125,5 +133,47 @@ export default class BaseEnemy {
 
     isDestroyed() {
         return this.health <= 0;
+    }
+
+    createPhysicsBody() {
+        if (!this.world) {
+            console.error('World not available for enemy physics body creation');
+            return;
+        }
+
+        // Create a kinematic rigid body for the enemy (controlled by game logic)
+        const rigidBodyDesc = window.RAPIER.RigidBodyDesc.kinematicPositionBased();
+        this.rigidBody = this.world.createRigidBody(rigidBodyDesc);
+
+        // Create a collider based on the mesh's bounding box
+        const box = new THREE.Box3().setFromObject(this.mesh);
+        const size = box.getSize(new THREE.Vector3());
+        const colliderDesc = window.RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+        colliderDesc.setCollisionGroups(0b0100); // Enemy collision group
+        this.collider = this.world.createCollider(colliderDesc, this.rigidBody);
+
+        // Store reference to the mesh and other data
+        this.rigidBody.userData = {
+            mesh: this.mesh,
+            isEnemy: true,
+            enemyId: this.id
+        };
+
+        // Position the rigid body at the mesh's position
+        this.rigidBody.setTranslation(this.mesh.position, true);
+        this.rigidBody.setRotation(this.mesh.quaternion, true);
+
+        console.log('Physics body created for enemy:', this.id);
+    }
+
+    update(deltaTime) {
+        // Basic update logic - can be overridden by subclasses
+        // For now, enemies just sit there
+
+        // Update physics body position and rotation if they exist
+        if (this.rigidBody && this.mesh) {
+            this.rigidBody.setTranslation(this.mesh.position, true);
+            this.rigidBody.setRotation(this.mesh.quaternion, true);
+        }
     }
 }

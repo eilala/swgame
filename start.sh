@@ -1,5 +1,16 @@
 #!/bin/bash
 
+# Kill ngrok tunnel
+pkill ngrok
+
+# Kill Vite development server
+pkill -f "vite"
+
+# Kill WebSocket server
+pkill -f "node server.js"
+
+echo "Cleanup complete."
+
 # Start the WebSocket server in the background
 npm run server &
 
