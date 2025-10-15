@@ -29,4 +29,8 @@ export const ImperialTieFighterConfig = {
 
     // Movement
     TURN_SPEED: 2, // Slightly more maneuverable
+
+    // Audio
+    ENGINE_AUDIO: '/assets/sfx/TIE_Engine.ogg',
+    BOOST_AUDIO: '/assets/sfx/TIE_Boost.ogg',
 };
