@@ -26,7 +26,7 @@ wss.on('connection', (ws) => {
         x: 0, y: 0, z: 0,
         rotationX: 0, rotationY: 0, rotationZ: 0, rotationW: 1,
         health: 100, maxHealth: 100,
-        shield: 100, maxShield: 100,
+        shield: 10, maxShield: 10,
         componentHealth: {
             main_body: 100,
             left_wing: 50,
@@ -65,7 +65,7 @@ wss.on('connection', (ws) => {
                 x: 0, y: 0, z: 0,
                 rotationX: 0, rotationY: 0, rotationZ: 0, rotationW: 1,
                 health: 100, maxHealth: 100,
-                shield: 100, maxShield: 100,
+                shield: 10, maxShield: 10,
                 componentHealth: {
                     main_body: 100,
                     left_wing: 50,
@@ -121,7 +121,7 @@ wss.on('connection', (ws) => {
             if (player && !player.isAlive) {
                 // Reset player stats
                 player.health = player.maxHealth;
-                player.shield = player.maxShield;
+                player.shield = 10; // Reset to 10 shields, not maxShield
                 player.componentHealth = {
                     main_body: 100,
                     left_wing: 50,
@@ -180,53 +180,66 @@ wss.on('connection', (ws) => {
                 return;
             }
             if (targetPlayer && targetPlayer.isAlive) {
-                // Check if hit a specific component
-                let componentId = message.componentId || null;
+                let remainingDamage = message.damage;
                 let componentDestroyed = false;
 
-                if (componentId && targetPlayer.componentHealth[componentId] !== undefined) {
-                    // Apply damage to the specific component
-                    targetPlayer.componentHealth[componentId] -= message.damage;
-                    targetPlayer.componentHealth[componentId] = Math.max(0, targetPlayer.componentHealth[componentId]);
-                    console.log(`Component ${componentId} health: ${targetPlayer.componentHealth[componentId]}`);
-
-                    // Check if component should be destroyed
-                    if (targetPlayer.componentHealth[componentId] <= 0) {
-                        componentDestroyed = true;
-                        console.log(`Player ${targetPlayer.name}'s ${componentId} was destroyed!`);
-
-                        // Broadcast component destruction to all clients
-                        wss.clients.forEach(client => {
-                            if (client.readyState === WebSocket.OPEN) {
-                                client.send(JSON.stringify({
-                                    type: 'playerComponentDestroyed',
-                                    playerId: message.targetPlayerId,
-                                    componentId: componentId
-                                }));
-                            }
-                        });
-                    }
+                // FIRST: Apply damage to shields (shields absorb damage before anything else)
+                if (targetPlayer.shield > 0) {
+                    const shieldDamage = Math.min(remainingDamage, targetPlayer.shield);
+                    targetPlayer.shield -= shieldDamage;
+                    remainingDamage -= shieldDamage;
+                    targetPlayer.shield = Math.max(0, targetPlayer.shield);
+                    console.log(`Shield absorbed ${shieldDamage} damage, remaining shield: ${targetPlayer.shield}`);
                 }
 
-                // Apply damage to shield first, then health (only if no component was hit or component wasn't destroyed)
-                if (!componentId || !componentDestroyed) {
-                    let damage = message.damage;
-                    if (targetPlayer.shield > 0) {
-                        const shieldDamage = Math.min(damage, targetPlayer.shield);
-                        targetPlayer.shield -= shieldDamage;
-                        damage -= shieldDamage;
-                        console.log(`Shield damage: ${shieldDamage}, remaining shield: ${targetPlayer.shield}`);
-                    }
-                    if (damage > 0) {
-                        targetPlayer.health -= damage;
-                        console.log(`Health damage: ${damage}, remaining health: ${targetPlayer.health}`);
+                // SECOND: If shields are depleted and we have remaining damage, apply to components and health
+                if (remainingDamage > 0) {
+                    // Check if hit a specific component
+                    let componentId = message.componentId || null;
+
+                    if (componentId && targetPlayer.componentHealth[componentId] !== undefined) {
+                            // Apply damage to the specific component
+                            const componentDamage = Math.min(remainingDamage, targetPlayer.componentHealth[componentId]);
+                            targetPlayer.componentHealth[componentId] -= componentDamage;
+                            targetPlayer.componentHealth[componentId] = Math.max(0, targetPlayer.componentHealth[componentId]);
+                            remainingDamage -= componentDamage;
+    
+                            // Also apply damage to total hull health when component is damaged
+                            const hullDamage = componentDamage;
+                            targetPlayer.health -= hullDamage;
+                            targetPlayer.health = Math.max(0, targetPlayer.health);
+    
+                            console.log(`Component ${componentId} damaged for ${componentDamage}, remaining component health: ${targetPlayer.componentHealth[componentId]}, remaining hull health: ${targetPlayer.health}`);
+    
+                            // Check if component should be destroyed
+                            if (targetPlayer.componentHealth[componentId] <= 0) {
+                                componentDestroyed = true;
+                                console.log(`Player ${targetPlayer.name}'s ${componentId} was destroyed!`);
+    
+                                // Broadcast component destruction to all clients
+                                wss.clients.forEach(client => {
+                                    if (client.readyState === WebSocket.OPEN) {
+                                        client.send(JSON.stringify({
+                                            type: 'playerComponentDestroyed',
+                                            playerId: message.targetPlayerId,
+                                            componentId: componentId
+                                        }));
+                                    }
+                                });
+                            }
                     }
 
-                    // Check if player died
-                    if (targetPlayer.health <= 0) {
-                        targetPlayer.isAlive = false;
-                        targetPlayer.health = 0;
-                        console.log(`Player ${targetPlayer.name} died!`);
+                    // Apply any remaining damage to health
+                    if (remainingDamage > 0) {
+                        targetPlayer.health -= remainingDamage;
+                        targetPlayer.health = Math.max(0, targetPlayer.health);
+                        console.log(`Health damage: ${remainingDamage}, remaining health: ${targetPlayer.health}`);
+
+                        // Check if player died
+                        if (targetPlayer.health <= 0) {
+                            targetPlayer.isAlive = false;
+                            console.log(`Player ${targetPlayer.name} died!`);
+                        }
                     }
                 }
 

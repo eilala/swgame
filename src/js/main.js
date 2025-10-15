@@ -7,9 +7,13 @@ import Controls from './controls.js';
 import PlayerCamera from './camera/player-camera.js';
 import UI from './ui.js';
 import BaseEnemy from './enemies/base-enemy.js';
+import BaseShip from './ships/base-ship.js';
 
 // Initialize Rapier physics
 let world = null;
+
+// Debug mode for tab-out bolt accumulation issue
+window.DEBUG_TAB_OUT_BOLTS = true;
 
 async function initializeRapier() {
      // Initialize Rapier WASM module
@@ -41,6 +45,23 @@ camera.add(audioListener);
 
 // Make audioListener globally available for weapon sounds
 window.camera = { audioListener };
+
+// Load audio buffer for networked laser sounds
+const audioLoader = new THREE.AudioLoader();
+let laserAudioBuffer = null;
+audioLoader.load(
+    '/assets/sfx/bolt.ogg',
+    (buffer) => {
+        laserAudioBuffer = buffer;
+        console.log('Laser sound loaded for networked fire');
+    },
+    (progress) => {
+        console.log('Loading networked laser sound...', (progress.loaded / progress.total * 100) + '%');
+    },
+    (error) => {
+        console.warn('Failed to load networked laser sound:', error);
+    }
+);
 
 // Renderer
 const renderer = new THREE.WebGLRenderer();
@@ -368,7 +389,29 @@ function createPlayerRigidBody(mesh, isLocalPlayer = false) {
     return rigidBody;
 }
 function handleNetworkedFire(data) {
-    // Create a networked blaster bolt
+    // Create a networked blaster bolt - but limit creation rate to prevent flooding
+    const currentTime = Date.now() / 1000;
+
+    // Check if we received a fire event recently from this player
+    if (!window.lastFireTime) window.lastFireTime = {};
+    if (!window.lastFireTime[data.playerId]) window.lastFireTime[data.playerId] = 0;
+
+    // Limit networked bolts to 10 per second per player to prevent flooding
+    const timeSinceLastFire = currentTime - window.lastFireTime[data.playerId];
+    if (timeSinceLastFire < 0.1) { // 100ms minimum between bolts from same player
+        if (window.DEBUG_TAB_OUT_BOLTS) {
+            console.log(`[DEBUG] Ignoring rapid networked fire from player ${data.playerId}, time since last: ${timeSinceLastFire}`);
+        }
+        return;
+    }
+
+    window.lastFireTime[data.playerId] = currentTime;
+
+    if (window.DEBUG_TAB_OUT_BOLTS) {
+        console.log(`[DEBUG] Creating networked bolt from player ${data.playerId}, tabHidden=${document.hidden}, networkedBoltsBefore=${networkedBolts.length}`);
+    }
+
+    // Create the bolt
     const geometry = new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8);
     const material = new THREE.MeshBasicMaterial({
         color: 0x00aaff, // Blue color for the blaster bolt
@@ -386,9 +429,41 @@ function handleNetworkedFire(data) {
     boltMesh.position.copy(data.position);
     const previousPosition = new THREE.Vector3(data.position.x, data.position.y, data.position.z); // Store initial position as Vector3
 
-    boltMesh.userData = { direction: data.direction, isNetworkedBolt: true, speed: 60, lifetime: 1, age: 0, ownerId: data.playerId, previousPosition: previousPosition };
+    boltMesh.userData = { direction: data.direction, isNetworkedBolt: true, speed: 60, lifetime: 1, age: 0, ownerId: data.playerId, previousPosition: previousPosition, hitTargets: new Set() };
     scene.add(boltMesh);
     networkedBolts.push(boltMesh);
+
+    if (window.DEBUG_TAB_OUT_BOLTS) {
+        console.log(`[DEBUG] Created networked bolt, total now: ${networkedBolts.length}`);
+    }
+
+    // Play firing sound at the bolt's position (only if tab is visible)
+    if (!document.hidden && laserAudioBuffer) {
+        try {
+            // Create positional audio source
+            const sound = new THREE.PositionalAudio(audioListener);
+            sound.setBuffer(laserAudioBuffer);
+            sound.setRefDistance(20); // Distance at which volume starts to attenuate
+            sound.setVolume(0.03); // Reduce volume to avoid being too loud
+
+            // Position the sound at the firing location
+            sound.position.copy(data.position);
+            scene.add(sound);
+
+            // Play the sound
+            sound.play();
+
+            // Clean up after sound finishes (with some buffer time)
+            setTimeout(() => {
+                if (sound.parent) {
+                    sound.parent.remove(sound);
+                }
+            }, 1000); // 1 second should be enough for most laser sounds
+
+        } catch (error) {
+            console.warn('Failed to play networked firing sound:', error);
+        }
+    }
 }
 
 function handleEnemyDestruction(enemyId) {
@@ -442,9 +517,40 @@ function handlePlayerDamage(data) {
         // Apply component-specific damage if component was hit
         if (data.componentId && player.ship.componentHealth[data.componentId] !== undefined) {
             console.log(`Applying component-specific damage: componentId=${data.componentId}, damage=${data.damage || 10}`);
-            const destroyed = player.ship.takeDamage(data.damage || 10, data.componentId);
-            if (destroyed && !player.isAlive) {
-                // Handle player death locally
+            player.ship.componentHealth[data.componentId] -= (data.damage || 10);
+            player.ship.componentHealth[data.componentId] = Math.max(0, player.ship.componentHealth[data.componentId]);
+
+            // Check if component should be destroyed
+            if (player.ship.componentHealth[data.componentId] <= 0) {
+                console.log(`Local player component ${data.componentId} destroyed due to network damage`);
+                player.ship.destroyComponent(data.componentId);
+            }
+        } else {
+            // Apply damage to shields and health if no specific component was hit
+            let damage = data.damage || 10;
+            if (player.ship.shield > 0) {
+                const shieldDamage = Math.min(damage, player.ship.shield);
+                player.ship.shield -= shieldDamage;
+                damage -= shieldDamage;
+                player.ship.shield = Math.max(0, player.ship.shield);
+                console.log(`Shield absorbed ${shieldDamage} damage, remaining shield: ${player.ship.shield}`);
+            }
+            if (damage > 0) {
+                player.ship.totalHullHealth -= damage;
+                player.ship.totalHullHealth = Math.max(0, player.ship.totalHullHealth);
+                console.log(`Hull damage: ${damage}, remaining hull: ${player.ship.totalHullHealth}`);
+            }
+
+            // Check destruction conditions
+            const mainHullDestroyed = !player.ship.componentHealth.main_body || player.ship.componentHealth.main_body <= 0;
+            const leftWingDestroyed = !player.ship.componentHealth.left_wing || player.ship.componentHealth.left_wing <= 0;
+            const rightWingDestroyed = !player.ship.componentHealth.right_wing || player.ship.componentHealth.right_wing <= 0;
+            const bothWingsDestroyed = leftWingDestroyed && rightWingDestroyed;
+
+            const isDestroyed = player.ship.totalHullHealth <= 0 || mainHullDestroyed || bothWingsDestroyed;
+
+            if (isDestroyed && player.isAlive) {
+                player.isAlive = false;
                 console.log('You died! Press R to respawn.');
                 // Hide the ship mesh
                 player.ship.mesh.visible = false;
@@ -495,41 +601,59 @@ function handlePlayerDamage(data) {
 
 function handlePlayerRespawn(data) {
     if (data.playerId === myPlayerId) {
-        // Local player respawned
+        // Local player respawned - reload the entire model to restore destroyed components
+        player.isAlive = data.isAlive;
+
+        // Remove the old mesh from scene if it exists
+        if (player.ship.mesh && player.ship.mesh.parent) {
+            player.ship.mesh.parent.remove(player.ship.mesh);
+        }
+
+        // Recreate the ship with a fresh model
+        player.ship = new BaseShip(scene, world);
+
+        // Set initial stats after model loads (in the BaseShip constructor callback)
         player.ship.health = data.health;
         player.ship.shield = data.shield;
-        player.ship.hull = data.health;
-        player.ship.totalHullHealth = data.totalHullHealth || 100;
-        // Reset component health on respawn
         player.ship.componentHealth = {
             main_body: 100,
             left_wing: 50,
             right_wing: 50
         };
-        player.isAlive = data.isAlive;
+
         player.position.set(data.x, data.y, data.z);
         player.quaternion.set(data.rotationX, data.rotationY, data.rotationZ, data.rotationW);
-        player.ship.mesh.visible = true;
-        console.log('You respawned!');
+
+        // Wait for the model to load, then position it correctly
+        const checkModelLoaded = () => {
+            if (player.ship.modelLoaded) {
+                player.ship.mesh.position.copy(player.position);
+                player.ship.mesh.quaternion.copy(player.quaternion);
+                player.ship.mesh.visible = true;
+                console.log('You respawned with a fresh ship!');
+            } else {
+                setTimeout(checkModelLoaded, 50); // Check again in 50ms
+            }
+        };
+        checkModelLoaded();
     } else {
-        // Other player respawned
+        // Other player respawned - reload the entire model to restore destroyed components
         if (otherPlayers[String(data.playerId)]) {
             const playerObj = otherPlayers[String(data.playerId)];
-            playerObj.mesh.position.set(data.x, data.y, data.z);
-            playerObj.mesh.quaternion.set(data.rotationX, data.rotationY, data.rotationZ, data.rotationW);
-            playerObj.health = data.health;
-            playerObj.shield = data.shield;
-            playerObj.totalHullHealth = data.totalHullHealth || 100;
-            playerObj.componentHealth = data.componentHealth || {
-                main_body: 100,
-                left_wing: 50,
-                right_wing: 50
-            };
-            playerObj.isAlive = data.isAlive;
-            playerObj.mesh.visible = true;
-            if (playerObj.nameSprite) {
-                playerObj.nameSprite.visible = true;
+
+            // Remove old model from scene
+            if (playerObj.mesh && playerObj.mesh.parent) {
+                playerObj.mesh.parent.remove(playerObj.mesh);
             }
+            if (playerObj.nameSprite && playerObj.nameSprite.parent) {
+                playerObj.nameSprite.parent.remove(playerObj.nameSprite);
+            }
+
+            // Remove from tracking
+            delete otherPlayers[String(data.playerId)];
+
+            // Respawn with fresh model
+            spawnOtherPlayer(data);
         } else {
             // Player didn't exist, spawn them
             spawnOtherPlayer(data);
@@ -633,22 +757,34 @@ let animationId = null;
 let isPaused = false;
 
 function animate() {
+    animationId = requestAnimationFrame(animate);
+
+    const deltaTime = clock.getDelta();
+
+    // Always cap deltaTime to prevent issues when tabbing back in after being away
+    const cappedDeltaTime = Math.min(deltaTime, 0.016); // Maximum ~16ms per frame (60 FPS)
+    // Log if deltaTime is unusually large (can happen when tabbing back in after being away)
+    if (deltaTime > 0.1) { // More than 100ms between frames
+        console.log('Large deltaTime detected:', deltaTime, 'Using cappedDeltaTime:', cappedDeltaTime);
+    }
+
+    // Update bolts even when tabbed out to prevent shotgun effect
+    const beforeUpdateNetworked = networkedBolts.length;
+    const beforeUpdateLocal = player?.ship?.primaryWeapon?.getBolts()?.length || 0;
+    updateBolts(cappedDeltaTime);
+    const afterUpdateNetworked = networkedBolts.length;
+    const afterUpdateLocal = player?.ship?.primaryWeapon?.getBolts()?.length || 0;
+
+    if (window.DEBUG_TAB_OUT_BOLTS && (beforeUpdateNetworked !== afterUpdateNetworked || beforeUpdateLocal !== afterUpdateLocal)) {
+        console.log(`[DEBUG] Bolt update: networked ${beforeUpdateNetworked}->${afterUpdateNetworked}, local ${beforeUpdateLocal}->${afterUpdateLocal}, tabHidden=${document.hidden}`);
+    }
+
     // Only continue if the page is visible and not paused
     if (!document.hidden && !isPaused) {
-        animationId = requestAnimationFrame(animate);
-        
-        const deltaTime = clock.getDelta();
-        
-        // Cap deltaTime to prevent issues when tabbing back in after being away
-        const cappedDeltaTime = Math.min(deltaTime, 0.05); // Maximum 50ms per frame
-        
-        // Log if deltaTime is unusually large (can happen when tabbing back in after being away)
-        if (deltaTime > 0.1) { // More than 100ms between frames
-            console.log('Large deltaTime detected:', deltaTime, 'Using cappedDeltaTime:', cappedDeltaTime);
-        }
 
         controls.update(cappedDeltaTime);
         player.update(controls, cappedDeltaTime);
+        // Ship update is done here, which includes weapon updates
         player.ship.update(player, cappedDeltaTime);
         playerCamera.update();
         ui.update();
@@ -684,22 +820,11 @@ function animate() {
             }
         }
 
-        // Update networked bolts
-        for (let i = networkedBolts.length - 1; i >= 0; i--) {
-            const bolt = networkedBolts[i];
-            const direction = new THREE.Vector3(bolt.userData.direction.x, bolt.userData.direction.y, bolt.userData.direction.z).normalize();
-
-            // Update previous position before moving
-            bolt.userData.previousPosition.copy(bolt.position);
-
-            bolt.position.add(direction.clone().multiplyScalar(bolt.userData.speed * cappedDeltaTime));
-
-            bolt.userData.age += cappedDeltaTime;
-            if (bolt.userData.age >= bolt.userData.lifetime) {
-                scene.remove(bolt);
-                networkedBolts.splice(i, 1);
-            }
-        }
+        // Update networked bolts (moved to separate function)
+                /*
+                Networked bolts are now updated in the updateBolts function called earlier in the animation loop
+                to prevent them from accumulating when tabbed out.
+                */
         
         // Limit the number of active networked bolts to prevent performance issues
         if (networkedBolts.length > 100) { // Reasonable limit to prevent too many bolts
@@ -933,7 +1058,7 @@ function animate() {
         }
 
         // Check networked bolts using raycasting - limit processing to prevent freezing
-        const maxNetworkedBoltsToProcess = 20; // Limit to prevent too many collision checks at once
+        const maxNetworkedBoltsToProcess = 10; // Reduced limit to prevent multiple hits
         let networkedBoltsProcessed = 0;
         for (let i = networkedBolts.length - 1; i >= 0 && networkedBoltsProcessed < maxNetworkedBoltsToProcess; i--) {
             networkedBoltsProcessed++;
@@ -968,59 +1093,85 @@ function animate() {
                 // Only apply this check if it's not the owner's own bolt, or if the bolt is past the grace period
                 if ((hitObject === player.ship.mesh || (hitObject.userData && hitObject.userData.isPlayer)) &&
                     !(bolt.userData.ownerId === myPlayerId && bolt.userData.age < 0.2)) { // Don't damage self during grace period
-                    console.log("Networked bolt hit player's own ship");
-                    // Update the last shield damage time to prevent immediate regeneration
-                    const currentTime = Date.now() / 1000; // Convert to seconds
-                    player.ship.lastShieldDamageTime = currentTime;
-                    
-                    // Send damage to server
-                    console.log(`Networked bolt from player ${bolt.userData.ownerId} hit local player for 10 damage!`);
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({
-                            type: 'playerHit',
-                            attackerPlayerId: bolt.userData.ownerId,
-                            targetPlayerId: myPlayerId,
-                            damage: 10
-                        }));
+
+                    // Check if this bolt has already hit this target
+                    const targetKey = `player_${myPlayerId}`;
+                    if (!bolt.userData.hitTargets.has(targetKey)) {
+                        if (window.DEBUG_TAB_OUT_BOLTS) {
+                            console.log(`[DEBUG] Networked bolt hit player's own ship - DAMAGE APPLIED`);
+                        }
+                        // Mark this target as hit by this bolt
+                        bolt.userData.hitTargets.add(targetKey);
+
+                        // Update the last shield damage time to prevent immediate regeneration
+                        const currentTime = Date.now() / 1000; // Convert to seconds
+                        player.ship.lastShieldDamageTime = currentTime;
+
+                        // Send damage to server
+                        if (window.DEBUG_TAB_OUT_BOLTS) {
+                            console.log(`[DEBUG] Sending damage: networked bolt from player ${bolt.userData.ownerId} hit local player for 10 damage!`);
+                        }
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: 'playerHit',
+                                attackerPlayerId: bolt.userData.ownerId,
+                                targetPlayerId: myPlayerId,
+                                damage: 10
+                            }));
+                        }
                     }
-                    // Remove the bolt
+                    // Remove the bolt immediately after collision to prevent multiple hits
                     if (bolt.parent) {
                         bolt.parent.remove(bolt);
                     }
                     networkedBolts.splice(i, 1);
+                    if (window.DEBUG_TAB_OUT_BOLTS) {
+                        console.log(`[DEBUG] Removed networked bolt after hitting player, remaining: ${networkedBolts.length}`);
+                    }
                     hitSomething = true;
                     break;
                 }
 
                 // Check collision with enemies
                 if (hitObject.userData && hitObject.userData.isEnemy) {
-                    console.log(`Networked bolt hit object is enemy with ID: ${hitObject.userData.enemyId}`);
+                    if (window.DEBUG_TAB_OUT_BOLTS) {
+                        console.log(`[DEBUG] Networked bolt hit enemy with ID: ${hitObject.userData.enemyId}`);
+                    }
                     for (let j = enemies.length - 1; j >= 0; j--) {
                         const enemy = enemies[j];
                         // Check if this hitObject is associated with this enemy
                         if (enemy.mesh === hitObject || hitObject.userData.enemyId === enemy.id) {
-                            console.log(`Networked bolt hit enemy ${enemy.id} for 10 damage!`);
+                            if (window.DEBUG_TAB_OUT_BOLTS) {
+                                console.log(`[DEBUG] Networked bolt hit enemy ${enemy.id} for 10 damage!`);
+                            }
 
                             // Check if hit a specific component
                             let componentId = null;
                             if (hitObject.userData && hitObject.userData.componentId) {
                                 componentId = hitObject.userData.componentId;
-                                console.log(`Networked bolt hit specific component: ${componentId}`);
+                                if (window.DEBUG_TAB_OUT_BOLTS) {
+                                    console.log(`[DEBUG] Networked bolt hit specific component: ${componentId}`);
+                                }
                             }
 
                             // Damage the enemy (with component-specific damage if applicable)
                             const destroyed = enemy.takeDamage(10, componentId); // Assuming damage 10 for networked bolts
 
-                            // Remove the bolt
+                            // Remove the bolt immediately after collision to prevent multiple hits
                             if (bolt.parent) {
                                 bolt.parent.remove(bolt);
                             }
                             networkedBolts.splice(i, 1);
+                            if (window.DEBUG_TAB_OUT_BOLTS) {
+                                console.log(`[DEBUG] Removed networked bolt after hitting enemy, remaining: ${networkedBolts.length}`);
+                            }
                             hitSomething = true;
 
                             // If enemy is destroyed, remove it and notify other players
                             if (destroyed) {
-                                console.log(`Enemy ${enemy.id} destroyed by networked bolt!`);
+                                if (window.DEBUG_TAB_OUT_BOLTS) {
+                                    console.log(`[DEBUG] Enemy ${enemy.id} destroyed by networked bolt!`);
+                                }
                                 scene.remove(enemy.mesh);
                                 enemies.splice(j, 1);
 
@@ -1046,29 +1197,35 @@ function animate() {
                         // Check if this hitObject is associated with this player
                         if (playerObj.mesh === hitObject || playerObj.mesh.userData.playerId === hitPlayerId || hitPlayerId === parseInt(playerId)) {
                             if (playerObj.isAlive) {
-                                console.log(`Networked bolt hit player ${playerObj.nameSprite.userData?.name || 'Player'} (ID: ${playerId}) for 10 damage!`);
+                                if (window.DEBUG_TAB_OUT_BOLTS) {
+                                    console.log(`[DEBUG] Networked bolt hit player ${playerObj.nameSprite.userData?.name || 'Player'} (ID: ${playerId}) for 10 damage!`);
+                                }
 
                                 // Check if hit a specific component
                                 let componentId = null;
                                 if (hitObject.userData && hitObject.userData.componentId) {
                                     componentId = hitObject.userData.componentId;
-                                    console.log(`Networked bolt hit player component: ${componentId} (mesh: ${hitObject.name})`);
-                                } else {
-                                    console.log(`DEBUG: hitObject.userData:`, hitObject.userData);
-                                    console.log(`DEBUG: hitObject.name: ${hitObject.name}`);
+                                    if (window.DEBUG_TAB_OUT_BOLTS) {
+                                        console.log(`[DEBUG] Networked bolt hit player component: ${componentId} (mesh: ${hitObject.name})`);
+                                    }
                                 }
 
-                                // Damage the player (with component-specific damage if applicable)
+                                // Remove the bolt immediately after collision to prevent multiple hits
                                 if (bolt.parent) {
                                     bolt.parent.remove(bolt);
                                 }
                                 networkedBolts.splice(i, 1);
+                                if (window.DEBUG_TAB_OUT_BOLTS) {
+                                    console.log(`[DEBUG] Removed networked bolt after hitting other player, remaining: ${networkedBolts.length}`);
+                                }
                                 hitSomething = true;
 
                                 // Send player damage to server (don't hit own player)
                                 const targetId = parseInt(playerId);
                                 if (targetId !== bolt.userData.ownerId) {
-                                    console.log(`Sending networked playerHit message: attackerPlayerId=${bolt.userData.ownerId}, targetPlayerId=${targetId}, damage=10, componentId=${componentId}`);
+                                    if (window.DEBUG_TAB_OUT_BOLTS) {
+                                        console.log(`[DEBUG] Sending networked playerHit message: attackerPlayerId=${bolt.userData.ownerId}, targetPlayerId=${targetId}, damage=10, componentId=${componentId}`);
+                                    }
                                     if (ws.readyState === WebSocket.OPEN) {
                                         ws.send(JSON.stringify({
                                             type: 'playerHit',
@@ -1101,19 +1258,34 @@ function animate() {
 
 // Handle tab visibility changes properly
 document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && isPaused) {
+    if (window.DEBUG_TAB_OUT_BOLTS) {
+        console.log(`[DEBUG] Tab visibility change: hidden=${document.hidden}, paused=${isPaused}`);
+    }
+
+    if (!document.hidden) {
         // Reset the clock to avoid large deltaTime when resuming
+        // Just call getDelta once to clear the accumulated time since the animation loop will handle the rest
         clock.getDelta();
-        // Resume the animation loop
+        // Ensure we're not paused
         isPaused = false;
-        animate();
-    } else if (document.hidden) {
-        // Pause the game when tab is hidden
-        isPaused = true;
-        if (animationId) {
-            cancelAnimationFrame(animationId);
-            animationId = null;
+        // Make sure animation loop is running
+        if (!animationId) {
+            animate();
         }
+
+        if (window.DEBUG_TAB_OUT_BOLTS) {
+            console.log(`[DEBUG] Tab-in: networkedBolts=${networkedBolts.length}, playerBolts=${player?.ship?.primaryWeapon?.getBolts()?.length || 0}`);
+        }
+
+        // Sync game state on tab-in by cleaning up expired bolts and resetting timers
+        syncGameStateOnTabIn();
+    } else if (document.hidden) {
+        if (window.DEBUG_TAB_OUT_BOLTS) {
+            console.log(`[DEBUG] Tab-out: networkedBolts=${networkedBolts.length}, playerBolts=${player?.ship?.primaryWeapon?.getBolts()?.length || 0}`);
+        }
+        // Don't pause the animation loop completely - just mark as paused for game logic
+        isPaused = true;
+        // Animation loop continues to run for rendering and networked elements
     }
 });
 
@@ -1466,3 +1638,92 @@ function handleSimpleCollisionDetection() {
 }
 
 animate();
+
+// Sync game state when tabbing back in to prevent accumulation issues
+function syncGameStateOnTabIn() {
+    if (window.DEBUG_TAB_OUT_BOLTS) {
+        console.log('[DEBUG] Syncing game state on tab-in');
+        console.log(`[DEBUG] Before sync: networkedBolts=${networkedBolts.length}`);
+    }
+
+    // Clear ALL networked bolts to prevent shotgun effect when tabbing back in
+    let clearedNetworked = 0;
+    for (let i = networkedBolts.length - 1; i >= 0; i--) {
+        const bolt = networkedBolts[i];
+        scene.remove(bolt);
+        networkedBolts.splice(i, 1);
+        clearedNetworked++;
+    }
+
+    // Clear expired local bolts and reset weapon timer
+    let expiredLocal = 0;
+    if (player && player.ship && player.ship.primaryWeapon) {
+        const shipBolts = player.ship.primaryWeapon.getBolts();
+        for (let i = shipBolts.length - 1; i >= 0; i--) {
+            const bolt = shipBolts[i];
+            if (bolt.isDestroyed) {
+                shipBolts.splice(i, 1);
+                if (bolt.mesh && bolt.mesh.parent) {
+                    bolt.mesh.parent.remove(bolt.mesh);
+                }
+                expiredLocal++;
+            }
+        }
+
+        // Reset the weapon's firing timer to prevent immediate burst
+        player.ship.primaryWeapon.fireTimer = 0;
+    }
+
+    if (window.DEBUG_TAB_OUT_BOLTS) {
+        console.log(`[DEBUG] Tab-in sync results: clearedNetworked=${clearedNetworked}, expiredLocal=${expiredLocal}`);
+        console.log(`[DEBUG] After sync: networkedBolts=${networkedBolts.length}, playerBolts=${player?.ship?.primaryWeapon?.getBolts()?.length || 0}`);
+    }
+}
+
+// Separate function to update bolts even when tabbed out to prevent accumulation
+function updateBolts(cappedDeltaTime) {
+    // Update networked bolts
+    for (let i = networkedBolts.length - 1; i >= 0; i--) {
+        const bolt = networkedBolts[i];
+        const direction = new THREE.Vector3(bolt.userData.direction.x, bolt.userData.direction.y, bolt.userData.direction.z).normalize();
+
+        // Update previous position before moving
+        bolt.userData.previousPosition.copy(bolt.position);
+
+        bolt.position.add(direction.clone().multiplyScalar(bolt.userData.speed * cappedDeltaTime));
+
+        bolt.userData.age += cappedDeltaTime;
+        if (bolt.userData.age >= bolt.userData.lifetime) {
+            scene.remove(bolt);
+            networkedBolts.splice(i, 1);
+        }
+    }
+
+    // Update local bolts - only if player and ship exist
+    if (player && player.ship && player.ship.primaryWeapon) {
+        const shipBolts = player.ship.primaryWeapon.getBolts();
+        shipBolts.forEach(bolt => {
+            if (bolt.mesh) {
+                bolt.update(cappedDeltaTime);
+            }
+
+            if (bolt.mesh && !scene.children.includes(bolt.mesh)) {
+                bolt.mesh.userData = bolt.mesh.userData || {};
+                bolt.mesh.userData.isBlasterBolt = true;
+                bolt.mesh.userData.ownerId = bolt.ownerId;
+                scene.add(bolt.mesh);
+            }
+        });
+
+        // Clean up expired local bolts
+        for (let i = scene.children.length - 1; i >= 0; i--) {
+            const child = scene.children[i];
+            if (child.userData && child.userData.isBlasterBolt) {
+                const stillActive = shipBolts.some(bolt => bolt.mesh === child);
+                if (!stillActive) {
+                    scene.remove(child);
+                }
+            }
+        }
+    }
+}

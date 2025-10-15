@@ -41,6 +41,9 @@ export default class BlasterBolt {
             age: this.age
         };
 
+        // Track targets already hit to prevent duplicate damage
+        this.hitTargets = new Set();
+
         // Create physics body
         this.createPhysicsBody();
     }

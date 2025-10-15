@@ -55,7 +55,7 @@ export default class BaseShip {
                         }
 
                         // Initialize component health if not already done
-                        if (!this.componentHealth[componentId]) {
+                        if (this.componentHealth[componentId] === undefined) {
                             // Assign different health values for different components
                             switch (componentId) {
                                 case 'main_body':
@@ -68,11 +68,15 @@ export default class BaseShip {
                                 default:
                                     this.componentHealth[componentId] = 50;
                             }
-                            this.componentMeshes[componentId] = [];
+                            if (!this.componentMeshes[componentId]) {
+                                this.componentMeshes[componentId] = [];
+                            }
                         }
 
                         // Track all meshes belonging to this component
-                        this.componentMeshes[componentId].push(child);
+                        if (this.componentMeshes[componentId]) {
+                            this.componentMeshes[componentId].push(child);
+                        }
                         child.userData.componentId = componentId;
                         child.userData.isPlayer = true;
                         child.userData.playerId = window.myPlayerId || 0;
@@ -124,7 +128,7 @@ export default class BaseShip {
                         }
 
                         // Initialize component health if not already done
-                        if (!this.componentHealth[componentId]) {
+                        if (this.componentHealth[componentId] === undefined) {
                             // Assign different health values for different components
                             switch (componentId) {
                                 case 'main_body':
@@ -137,11 +141,15 @@ export default class BaseShip {
                                 default:
                                     this.componentHealth[componentId] = 50;
                             }
-                            this.componentMeshes[componentId] = [];
+                            if (!this.componentMeshes[componentId]) {
+                                this.componentMeshes[componentId] = [];
+                            }
                         }
 
                         // Track all meshes belonging to this component
-                        this.componentMeshes[componentId].push(child);
+                        if (this.componentMeshes[componentId]) {
+                            this.componentMeshes[componentId].push(child);
+                        }
                         child.userData.componentId = componentId;
                         child.userData.isPlayer = true; // Use same flag as other players for consistency
                         child.userData.playerId = window.myPlayerId || 0; // Set player ID for the local player

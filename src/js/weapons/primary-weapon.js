@@ -165,21 +165,24 @@ export default class PrimaryWeapon {
     update(deltaTime, player) {
         // Cap deltaTime to prevent issues when tabbing back in
         const cappedDeltaTime = Math.min(deltaTime, 0.05); // Maximum 50ms per frame
-        
-        // Handle continuous firing
-        if (this.isFiring) {
+
+        // Handle continuous firing - only fire if not tabbed out and energy available
+        if (this.isFiring && !document.hidden && this.ship.energy >= this.energyCost) {
             this.fireTimer += cappedDeltaTime;
             const currentTime = Date.now() / 1000;
 
             // Fire at appropriate intervals
             // Limit the number of shots fired at once to prevent issues when tabbing back in after being away
             let shotsFired = 0;
-            const maxShotsPerUpdate = 5; // Limit to prevent excessive bolt creation
+            const maxShotsPerUpdate = 1; // Reduced to just 1 shot per update when tabbing back in
             while (this.fireTimer >= this.fireInterval && this.canFire(currentTime) && shotsFired < maxShotsPerUpdate) {
                 this.fire(player);
                 this.fireTimer -= this.fireInterval;
                 shotsFired++;
             }
+        } else if (!this.isFiring) {
+            // Reset timer when not firing to prevent accumulation
+            this.fireTimer = 0;
         }
 
         // Update bolts and remove expired ones
