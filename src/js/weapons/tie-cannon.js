@@ -23,6 +23,7 @@ export default class TieCannon {
         this.bolts = [];
         this.isFiring = false;
         this.fireTimer = 0;
+        this.firingTime = 0;
 
         // Audio setup
         this.audioLoaded = false;
@@ -66,22 +67,25 @@ export default class TieCannon {
      * @param {Player} player - The player firing the weapon
      * @returns {boolean} True if firing was successful
      */
-    fire(player) {
-        const currentTime = Date.now() / 1000;
+     fire(player) {
+         const currentTime = Date.now() / 1000;
 
-        // Check firing conditions
-        if (!this.canFire(currentTime) || this.ship.energy < this.energyCost * 2) { // Double energy cost for two bolts
-            return false;
-        }
+         // Check firing conditions
+         if (!this.canFire(currentTime) || this.ship.energy < this.energyCost * 2) { // Double energy cost for two bolts
+             return false;
+         }
 
-        // Drain energy
-        this.ship.energy -= this.energyCost * 2; // Double cost for two bolts
-        this.ship.lastEnergyActionTime = currentTime;
-        this.lastShotTime = currentTime;
+         // Drain energy
+         this.ship.energy -= this.energyCost * 2; // Double cost for two bolts
+         this.ship.lastEnergyActionTime = currentTime;
+         this.lastShotTime = currentTime;
 
-        // Calculate firing parameters
-        const firingPosition = this._calculateFiringPosition(player);
-        const direction = this._calculateFiringDirection(player, currentTime);
+         // Update firing time for convergence
+         this.firingTime += this.fireInterval;
+
+         // Calculate firing parameters
+         const firingPosition = this._calculateFiringPosition(player);
+         const direction = this._calculateFiringDirection(player);
 
         // Calculate spread offset perpendicular to firing direction (side by side)
         // Use ship up vector to ensure spread is always horizontal relative to ship
@@ -172,6 +176,7 @@ export default class TieCannon {
      */
     stopFiring() {
         this.isFiring = false;
+        this.firingTime = 0; // Reset convergence when stopping fire
     }
 
     /**
@@ -200,6 +205,7 @@ export default class TieCannon {
         } else if (!this.isFiring) {
             // Reset timer when not firing to prevent accumulation
             this.fireTimer = 0;
+            this.firingTime = 0; // Reset convergence when not firing
         }
 
         // Update bolts and remove expired ones
@@ -244,13 +250,28 @@ export default class TieCannon {
     }
 
     /**
+     * Calculates the target point for convergence aiming.
+     * @private
+     * @param {Player} player - The firing player
+     * @returns {THREE.Vector3} Target point for convergence
+     */
+    _calculateTargetPoint(player) {
+        // Camera-based aiming for convergence
+        const cameraOffset = new THREE.Vector3(0, 2, 5).applyQuaternion(player.quaternion);
+        const cameraPosition = player.position.clone().add(cameraOffset);
+        const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+        return cameraPosition.clone().add(
+            cameraForward.clone().multiplyScalar(this.convergenceRange)
+        );
+    }
+
+    /**
      * Calculates the firing direction with convergence aiming.
      * @private
      * @param {Player} player - The firing player
-     * @param {number} currentTime - Current time
      * @returns {THREE.Vector3} Normalized firing direction
      */
-    _calculateFiringDirection(player, currentTime) {
+    _calculateFiringDirection(player) {
        // Check if ship mesh is loaded before accessing it
         if (!player.ship || !player.ship.mesh) {
             // Return a default forward direction if mesh is not loaded yet
@@ -258,19 +279,12 @@ export default class TieCannon {
         }
         const shipForward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.ship.mesh.quaternion);
 
-        // Camera-based aiming for convergence
-        const cameraOffset = new THREE.Vector3(0, 2, 5).applyQuaternion(player.quaternion);
-        const cameraPosition = player.position.clone().add(cameraOffset);
-        const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
-        const targetPoint = cameraPosition.clone().add(
-            cameraForward.clone().multiplyScalar(this.convergenceRange)
-        );
+        const targetPoint = this._calculateTargetPoint(player);
         const firingPosition = this._calculateFiringPosition(player);
         const cameraDirection = targetPoint.clone().sub(firingPosition).normalize();
 
         // Convergence based on sustained firing time
-        const timeSinceLastShot = currentTime - this.lastShotTime;
-        const convergenceFactor = Math.min(timeSinceLastShot * 2, 1);
+        const convergenceFactor = Math.min(this.firingTime * 2, 1);
 
         return shipForward.clone().lerp(cameraDirection, convergenceFactor).normalize();
     }

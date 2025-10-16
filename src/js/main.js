@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import RAPIER from '@dimforge/rapier3d';
 import Player from './player/player.js';
 import { loadRandomMap } from './maps/map-loader.js';
@@ -71,6 +74,20 @@ audioLoader.load(
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
+
+// Post-processing setup for glow effects
+const composer = new EffectComposer(renderer);
+const renderPass = new RenderPass(scene, camera);
+composer.addPass(renderPass);
+
+// Add bloom pass for glow effects on emissive materials
+const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    1.5, // strength
+    0.4, // radius
+    0.85 // threshold
+);
+composer.addPass(bloomPass);
 
 // Add ambient light for visibility
 const ambientLight = new THREE.AmbientLight(0x404040, 1); // soft white light
@@ -1301,7 +1318,7 @@ function animate() {
             if (hitSomething) continue;
         }
 
-        renderer.render(scene, camera);
+        composer.render();
     } else {
         // When paused or hidden, don't continue the animation loop
         // We'll restart it when the page becomes visible again

@@ -53,20 +53,26 @@ export default class LaserImperial {
                                     mat.side = THREE.DoubleSide;
                                     // Make full bright by disabling lighting
                                     mat.lights = false;
-                                    // Make more emissive for better visibility
-                                    if (mat.emissive) {
-                                        mat.emissive.setHex(0x004400);
+                                    // Force emissive glow effect
+                                    if (!mat.emissive) {
+                                        mat.emissive = new THREE.Color(0x00ff00);
+                                    } else {
+                                        mat.emissive.setHex(0x00ff00);
                                     }
+                                    mat.emissiveIntensity = 1.5; // Increase intensity for stronger glow
                                 }
                             });
                         } else {
                             child.material.side = THREE.DoubleSide;
                             // Make full bright by disabling lighting
                             child.material.lights = false;
-                            // Make more emissive for better visibility
-                            if (child.material.emissive) {
-                                child.material.emissive.setHex(0x004400);
+                            // Force emissive glow effect
+                            if (!child.material.emissive) {
+                                child.material.emissive = new THREE.Color(0x00ff00);
+                            } else {
+                                child.material.emissive.setHex(0x00ff00);
                             }
+                            child.material.emissiveIntensity = 1.5; // Increase intensity for stronger glow
                         }
                     }
                 });
@@ -137,7 +143,8 @@ export default class LaserImperial {
         const geometry = new THREE.CylinderGeometry(0.08, 0.08, 1.0, 8);
         const material = new THREE.MeshBasicMaterial({
             color: 0x00ff00, // Bright green for imperial laser
-            emissive: 0x004400 // Green emissive glow
+            emissive: 0x00ff00, // Bright green emissive glow
+            emissiveIntensity: 3.0 // Even stronger glow effect for fallback
         });
 
         this.mesh = new THREE.Mesh(geometry, material);
