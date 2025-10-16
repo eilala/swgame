@@ -36,13 +36,14 @@ wss.on('connection', (ws) => {
         name: playerName,
         x: 0, y: 0, z: 0,
         rotationX: 0, rotationY: 0, rotationZ: 0, rotationW: 1,
-        health: 100, maxHealth: 100,
-        shield: 10, maxShield: 10,
+        health: 110, maxHealth: 110,
+        shield: 0, maxShield: 0,
         componentHealth: {
             main_body: 100,
             left_wing: 50,
             right_wing: 50
         },
+        shipType: 'imperial-tie-fighter',
         isAlive: true
     };
 
@@ -53,9 +54,11 @@ wss.on('connection', (ws) => {
         type: 'spawn',
         playerId: playerId,
         playerName: playerName,
+        shipType: players[playerId].shipType,
         players: Object.keys(players).map(id => ({
             id: parseInt(id),
             name: players[id].name,
+            shipType: players[id].shipType,
             x: players[id].x, y: players[id].y, z: players[id].z,
             rotationX: players[id].rotationX, rotationY: players[id].rotationY, rotationZ: players[id].rotationZ, rotationW: players[id].rotationW,
             health: players[id].health, maxHealth: players[id].maxHealth,
@@ -73,10 +76,11 @@ wss.on('connection', (ws) => {
                 type: 'newPlayer',
                 playerId: playerId,
                 playerName: playerName,
+                shipType: players[playerId].shipType,
                 x: 0, y: 0, z: 0,
                 rotationX: 0, rotationY: 0, rotationZ: 0, rotationW: 1,
-                health: 100, maxHealth: 100,
-                shield: 10, maxShield: 10,
+                health: 110, maxHealth: 110,
+                shield: 0, maxShield: 0,
                 componentHealth: {
                     main_body: 100,
                     left_wing: 50,
@@ -132,7 +136,7 @@ wss.on('connection', (ws) => {
             if (player && !player.isAlive) {
                 // Reset player stats
                 player.health = player.maxHealth;
-                player.shield = 10; // Reset to 10 shields, not maxShield
+                player.shield = 0; // Reset to 0 shields for imperial tie fighter
                 player.componentHealth = {
                     main_body: 100,
                     left_wing: 50,
@@ -156,6 +160,7 @@ wss.on('connection', (ws) => {
                             type: 'playerRespawned',
                             playerId: playerId,
                             name: player.name,
+                            shipType: player.shipType,
                             x: player.x, y: player.y, z: player.z,
                             rotationX: player.rotationX, rotationY: player.rotationY, rotationZ: player.rotationZ, rotationW: player.rotationW,
                             health: player.health, maxHealth: player.maxHealth,
@@ -268,12 +273,13 @@ wss.on('connection', (ws) => {
                         targetPlayer.health -= remainingDamage;
                         targetPlayer.health = Math.max(0, targetPlayer.health);
                         console.log(`Health damage: ${remainingDamage}, remaining health: ${targetPlayer.health}`);
+                    }
 
-                        // Check if player died
-                        if (targetPlayer.health <= 0) {
-                            targetPlayer.isAlive = false;
-                            console.log(`Player ${targetPlayer.name} died!`);
-                        }
+                    // Check if player died - player dies when hull health reaches 0
+                    // This check must happen after ALL damage has been applied
+                    if (targetPlayer.health <= 0) {
+                        targetPlayer.isAlive = false;
+                        console.log(`Player ${targetPlayer.name} died! Player dies when hull health reaches 0`);
                     }
                 }
 

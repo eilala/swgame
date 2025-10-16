@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import ImperialTieFighter from '../ships/imperial-tie-fighter.js';
+import BaseShip from '../ships/base-ship.js';
 
 export default class Player {
     constructor(scene, world) {
-        this.ship = new ImperialTieFighter(scene, world);
+        // Don't create ship here - it will be set by main.js based on server assignment
 
         // Physics properties
         this.position = new THREE.Vector3();

@@ -8,6 +8,7 @@ import PlayerCamera from './camera/player-camera.js';
 import UI from './ui.js';
 import BaseEnemy from './enemies/base-enemy.js';
 import BaseShip from './ships/base-ship.js';
+import ImperialTieFighter from './ships/imperial-tie-fighter.js';
 import DebrisManager from './managers/debris-manager.js';
 
 // Initialize Rapier physics
@@ -99,12 +100,15 @@ loadRandomMap(scene, world);
 
 // Player
 const player = new Player(scene, world);
-// Note: player.ship.mesh will be added to scene in the GLTF loader callback within BaseShip constructor
+// Note: player.ship will be set based on ship type
 
 // Set debris manager reference for the player's ship
 if (player.ship && typeof player.ship.setDebrisManager === 'function') {
     player.ship.setDebrisManager(debrisManager);
 }
+
+// Store the player's assigned ship type
+let myShipType = 'imperial-tie-fighter';
 
 // WebSocket event handlers
 ws.onopen = () => {
@@ -118,7 +122,16 @@ ws.onmessage = (event) => {
         myPlayerId = message.playerId;
         window.myPlayerId = message.playerId; // Set global ID
         myPlayerName = message.playerName;
-        console.log(`You are ${myPlayerName}`);
+        myShipType = message.shipType || 'imperial-tie-fighter';
+        console.log(`You are ${myPlayerName} with ship type ${myShipType}`);
+
+        // Initialize player ship based on type
+        if (myShipType === 'imperial-tie-fighter') {
+            player.ship = new ImperialTieFighter(scene, world);
+        } else {
+            player.ship = new BaseShip(scene, world);
+        }
+
         // Spawn other players
         message.players.forEach(otherPlayer => {
             if (otherPlayer.id !== myPlayerId) {
@@ -163,10 +176,15 @@ function spawnOtherPlayer(playerData) {
         return;
     }
 
-    // Load the TIE Fighter model for other players
+    // Determine ship type - all players currently use imperial-tie-fighter
+    const shipType = playerData.shipType || 'imperial-tie-fighter';
+
+    // Load the appropriate model based on ship type
+    let modelPath = '/assets/models/tiefighter/TIEFighter.glb'; // Default to TIE Fighter
+
     const loader = new GLTFLoader();
     loader.load(
-        '/assets/models/tiefighter/TIEFighter.glb',
+        modelPath,
         (gltf) => {
             const mesh = gltf.scene;
             mesh.position.set(playerData.x || 0, playerData.y || 0, playerData.z || 0);
@@ -252,10 +270,11 @@ function spawnOtherPlayer(playerData) {
             otherPlayers[playerId] = {
                 mesh,
                 nameSprite: sprite,
-                health: playerData.health || 100,
-                maxHealth: playerData.maxHealth || 100,
-                shield: playerData.shield || 100,
-                maxShield: playerData.maxShield || 100,
+                shipType,
+                health: playerData.health || 110,
+                maxHealth: playerData.maxHealth || 110,
+                shield: playerData.shield || 0,
+                maxShield: playerData.maxShield || 0,
                 isAlive: playerData.isAlive !== false
             };
 
@@ -308,10 +327,11 @@ function spawnOtherPlayer(playerData) {
             otherPlayers[playerId] = {
                 mesh,
                 nameSprite: sprite,
-                health: playerData.health || 100,
-                maxHealth: playerData.maxHealth || 100,
-                shield: playerData.shield || 100,
-                maxShield: playerData.maxShield || 100,
+                shipType,
+                health: playerData.health || 110,
+                maxHealth: playerData.maxHealth || 110,
+                shield: playerData.shield || 0,
+                maxShield: playerData.maxShield || 0,
                 isAlive: playerData.isAlive !== false
             };
 
@@ -589,7 +609,7 @@ function handlePlayerDamage(data) {
             // Store health data for visual feedback (could change cube color based on health)
             playerObj.health = data.health;
             playerObj.shield = data.shield;
-            playerObj.totalHullHealth = data.totalHullHealth || playerObj.totalHullHealth || 100;
+            playerObj.totalHullHealth = data.totalHullHealth || playerObj.totalHullHealth || 110;
             playerObj.componentHealth = data.componentHealth || playerObj.componentHealth || {
                 main_body: 100,
                 left_wing: 50,
@@ -598,12 +618,41 @@ function handlePlayerDamage(data) {
             playerObj.isAlive = data.isAlive;
 
             if (!data.isAlive) {
-                // Could hide the player's ship or show explosion effect
+                // Player died - hide the ship and create debris explosion for the entire ship
                 playerObj.mesh.visible = false;
                 if (playerObj.nameSprite) {
                     playerObj.nameSprite.visible = false;
                 }
                 console.log(`${playerObj.nameSprite.userData?.name || 'Player'} died!`);
+
+                // Create debris explosion for entire ship destruction
+                if (debrisManager && playerObj.mesh) {
+                    // Collect all meshes from the player's ship
+                    const shipMeshes = [];
+                    playerObj.mesh.traverse((child) => {
+                        if (child.isMesh) {
+                            shipMeshes.push(child);
+                        }
+                    });
+
+                    // Calculate center position for the explosion
+                    let centerPosition = new THREE.Vector3();
+                    if (shipMeshes.length > 0) {
+                        shipMeshes.forEach(mesh => {
+                            centerPosition.add(mesh.position);
+                        });
+                        centerPosition.divideScalar(shipMeshes.length);
+                        // Transform to world position
+                        centerPosition.applyMatrix4(playerObj.mesh.matrixWorld);
+                    } else {
+                        // Fallback to mesh position if no children
+                        centerPosition.copy(playerObj.mesh.position);
+                    }
+
+                    // Create debris for the entire ship
+                    debrisManager.createDebrisFromComponent(shipMeshes, centerPosition);
+                    console.log(`Player ${playerObj.nameSprite?.userData?.name || 'Player'} ship converted to debris`);
+                }
             } else {
                 playerObj.mesh.visible = true;
                 if (playerObj.nameSprite) {
@@ -625,9 +674,14 @@ function handlePlayerRespawn(data) {
         }
 
         // Recreate the ship with a fresh model
-        player.ship = new BaseShip(scene, world);
+        const shipType = data.shipType || myShipType;
+        if (shipType === 'imperial-tie-fighter') {
+            player.ship = new ImperialTieFighter(scene, world);
+        } else {
+            player.ship = new BaseShip(scene, world);
+        }
 
-        // Set initial stats after model loads (in the BaseShip constructor callback)
+        // Set initial stats after model loads (in the ship constructor callback)
         player.ship.health = data.health;
         player.ship.shield = data.shield;
         player.ship.componentHealth = {
@@ -645,7 +699,7 @@ function handlePlayerRespawn(data) {
                 player.ship.mesh.position.copy(player.position);
                 player.ship.mesh.quaternion.copy(player.quaternion);
                 player.ship.mesh.visible = true;
-                console.log('You respawned with a fresh ship!');
+                console.log(`You respawned with a fresh ${shipType}!`);
             } else {
                 setTimeout(checkModelLoaded, 50); // Check again in 50ms
             }
