@@ -9,6 +9,7 @@ export default class PhysicsManager {
         this.gameState = gameState;
         this.physicsBodies = new Map();
         this.isdBodies = [];
+        this.debrisBodies = new Map(); // Track debris physics bodies separately
     }
 
     /**
@@ -305,6 +306,35 @@ export default class PhysicsManager {
                 this.world.removeRigidBody(rigidBody);
                 this.physicsBodies.delete(mesh);
             }
+        }
+
+        // Clean up debris bodies
+        for (const [mesh, rigidBody] of this.debrisBodies) {
+            if (!mesh.parent) {
+                this.world.removeRigidBody(rigidBody);
+                this.debrisBodies.delete(mesh);
+            }
+        }
+    }
+
+    /**
+     * Register a debris physics body
+     * @param {THREE.Mesh} mesh - The debris mesh
+     * @param {Rapier.RigidBody} rigidBody - The physics body
+     */
+    registerDebrisBody(mesh, rigidBody) {
+        this.debrisBodies.set(mesh, rigidBody);
+    }
+
+    /**
+     * Remove a debris physics body
+     * @param {THREE.Mesh} mesh - The debris mesh
+     */
+    removeDebrisBody(mesh) {
+        const rigidBody = this.debrisBodies.get(mesh);
+        if (rigidBody) {
+            this.world.removeRigidBody(rigidBody);
+            this.debrisBodies.delete(mesh);
         }
     }
 }

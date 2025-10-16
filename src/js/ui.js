@@ -54,7 +54,7 @@ export default class UI {
 
     update() {
         const speed = this.player.velocity.length();
-        this.speedElement.innerText = `Speed: ${Math.round(speed * 100)}`;
+        this.speedElement.innerText = `Speed: ${Math.round(speed * 100)} (${Math.round(speed)})`;
 
         const shield = this.player.ship.shield;
         this.shieldElement.innerText = `Shield: ${Math.round(shield)}`;

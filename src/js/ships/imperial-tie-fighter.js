@@ -192,6 +192,17 @@ export default class ImperialTieFighter {
 
         // Track acceleration for audio volume
         this.currentAcceleration = 0;
+
+        // Reference to debris manager (set externally)
+        this.debrisManager = null;
+    }
+
+    /**
+     * Set debris manager reference
+     * @param {DebrisManager} debrisManager - The debris manager instance
+     */
+    setDebrisManager(debrisManager) {
+        this.debrisManager = debrisManager;
     }
 
     createPhysicsBody() {
@@ -247,6 +258,11 @@ export default class ImperialTieFighter {
 
         // Update boost audio based on boosting state
         this.updateBoostAudio();
+
+        // Update debris manager if available
+        if (this.debrisManager) {
+            this.debrisManager.update(cappedDeltaTime);
+        }
     }
 
     firePrimaryWeapon(player) {
@@ -320,12 +336,28 @@ export default class ImperialTieFighter {
         if (this.componentMeshes[componentId]) {
             const meshes = this.componentMeshes[componentId];
 
-            meshes.forEach(mesh => {
-                if (mesh.parent) {
-                    mesh.parent.remove(mesh);
-                    console.log(`Imperial Tie Fighter component ${componentId} mesh "${mesh.name}" destroyed and removed`);
-                }
-            });
+            // Calculate center position for debris explosion
+            let centerPosition = new THREE.Vector3();
+            if (meshes.length > 0) {
+                meshes.forEach(mesh => {
+                    centerPosition.add(mesh.position);
+                });
+                centerPosition.divideScalar(meshes.length);
+            }
+
+            // Create debris if manager is available
+            if (this.debrisManager) {
+                this.debrisManager.createDebrisFromComponent(meshes, centerPosition, this.mesh);
+                console.log(`Imperial Tie Fighter component ${componentId} converted to debris`);
+            } else {
+                // Fallback: Remove meshes directly (legacy behavior)
+                meshes.forEach(mesh => {
+                    if (mesh.parent) {
+                        mesh.parent.remove(mesh);
+                        console.log(`Imperial Tie Fighter component ${componentId} mesh "${mesh.name}" destroyed and removed`);
+                    }
+                });
+            }
 
             delete this.componentHealth[componentId];
             delete this.componentMeshes[componentId];
@@ -559,14 +591,14 @@ export default class ImperialTieFighter {
             this.engineSound.play();
         }
 
-        // Map speed to volume (0.0 to 0.1 range)
-        // At rest: 0.0, at max speed: 0.1 (very quiet)
+        // Map speed to volume (reverse scaling: loud at low speed, silent at high speed)
+        // At rest: 0.01, at max speed: 0.0
         const speedMagnitude = player.velocity.length();
-        const minVolume = 0.0025;
-        const maxVolume = 0.0025;
+        const minVolume = 0.0;
+        const maxVolume = 0.01;
         const maxSpeed = this.maxSpeedForward; // Use max speed as reference
 
-        const targetVolume = minVolume + (maxVolume - minVolume) * Math.min(speedMagnitude / maxSpeed, 1.0);
+        const targetVolume = minVolume + (maxVolume - minVolume) * (1.0 - Math.min(speedMagnitude / maxSpeed, 1.0));
 
         // Smooth the volume changes
         const currentVolume = this.engineSound.getVolume();

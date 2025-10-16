@@ -241,6 +241,9 @@ export default class BaseEnemy {
 
         if (isDestroyed) {
             console.log('Enemy destroyed!');
+
+            // Destroy all remaining components to create debris
+            this.destroyAllRemainingComponents();
         }
 
         return isDestroyed;
@@ -310,13 +313,28 @@ export default class BaseEnemy {
         if (this.componentMeshes[componentId]) {
             const meshes = this.componentMeshes[componentId];
 
-            // Remove all meshes belonging to this component
-            meshes.forEach(mesh => {
-                if (mesh.parent) {
-                    mesh.parent.remove(mesh);
-                    console.log(`Component ${componentId} mesh "${mesh.name}" destroyed and removed from enemy ${this.id}`);
-                }
-            });
+            // Calculate center position for debris explosion
+            let centerPosition = new THREE.Vector3();
+            if (meshes.length > 0) {
+                meshes.forEach(mesh => {
+                    centerPosition.add(mesh.position);
+                });
+                centerPosition.divideScalar(meshes.length);
+            }
+
+            // Create debris if manager is available
+            if (this.debrisManager) {
+                this.debrisManager.createDebrisFromComponent(meshes, centerPosition, this.mesh);
+                console.log(`Component ${componentId} converted to debris on enemy ${this.id}`);
+            } else {
+                // Fallback: Remove meshes directly (legacy behavior)
+                meshes.forEach(mesh => {
+                    if (mesh.parent) {
+                        mesh.parent.remove(mesh);
+                        console.log(`Component ${componentId} mesh "${mesh.name}" destroyed and removed from enemy ${this.id}`);
+                    }
+                });
+            }
 
             // Remove from tracking
             delete this.componentHealth[componentId];
@@ -437,6 +455,19 @@ export default class BaseEnemy {
     }
     
     /**
+     * Set debris manager reference
+     * @param {DebrisManager} debrisManager - The debris manager instance
+     */
+    setDebrisManager(debrisManager) {
+        this.debrisManager = debrisManager;
+
+        // Also set it for any existing target dummy UI
+        if (this.targetDummyUI) {
+            this.targetDummyUI.debrisManager = debrisManager;
+        }
+    }
+
+    /**
      * Clean up resources when enemy is destroyed
      */
     destroy() {
@@ -445,5 +476,19 @@ export default class BaseEnemy {
             this.targetDummyUI.destroy();
             this.targetDummyUI = null;
         }
+    }
+
+    /**
+     * Destroy all remaining components when enemy is fully destroyed
+     */
+    destroyAllRemainingComponents() {
+        const remainingComponents = Object.keys(this.componentHealth);
+
+        remainingComponents.forEach(componentId => {
+            if (this.componentHealth[componentId] > 0) {
+                console.log(`Destroying remaining component ${componentId} for debris explosion`);
+                this.destroyComponent(componentId);
+            }
+        });
     }
 }

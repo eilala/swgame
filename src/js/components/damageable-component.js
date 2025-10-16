@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 /**
  * Common damage and component health system for ships and enemies
  */
@@ -8,6 +9,9 @@ export default class DamageableComponent {
         this.componentHealth = { ...componentHealth };
         this.componentMeshes = {};
         this.componentIds = Object.keys(componentHealth);
+
+        // Reference to debris manager (set externally)
+        this.debrisManager = null;
     }
 
     /**
@@ -100,13 +104,28 @@ export default class DamageableComponent {
         if (this.componentMeshes[componentId]) {
             const meshes = this.componentMeshes[componentId];
 
-            // Remove all meshes belonging to this component
-            meshes.forEach(mesh => {
-                if (mesh.parent) {
-                    mesh.parent.remove(mesh);
-                    console.log(`Component ${componentId} mesh "${mesh.name}" destroyed and removed`);
-                }
-            });
+            // Calculate center position for debris explosion
+            let centerPosition = new THREE.Vector3();
+            if (meshes.length > 0) {
+                meshes.forEach(mesh => {
+                    centerPosition.add(mesh.position);
+                });
+                centerPosition.divideScalar(meshes.length);
+            }
+
+            // Create debris if manager is available
+            if (this.debrisManager) {
+                this.debrisManager.createDebrisFromComponent(meshes, centerPosition);
+                console.log(`Component ${componentId} converted to debris`);
+            } else {
+                // Fallback: Remove meshes directly (legacy behavior)
+                meshes.forEach(mesh => {
+                    if (mesh.parent) {
+                        mesh.parent.remove(mesh);
+                        console.log(`Component ${componentId} mesh "${mesh.name}" destroyed and removed`);
+                    }
+                });
+            }
 
             // Remove from tracking
             delete this.componentHealth[componentId];
@@ -220,5 +239,13 @@ export default class DamageableComponent {
      */
     getMaxTotalHullHealth() {
         return this.maxTotalHullHealth;
+    }
+
+    /**
+     * Set debris manager reference
+     * @param {DebrisManager} debrisManager - The debris manager instance
+     */
+    setDebrisManager(debrisManager) {
+        this.debrisManager = debrisManager;
     }
 }

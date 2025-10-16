@@ -8,6 +8,7 @@ import PlayerCamera from './camera/player-camera.js';
 import UI from './ui.js';
 import BaseEnemy from './enemies/base-enemy.js';
 import BaseShip from './ships/base-ship.js';
+import DebrisManager from './managers/debris-manager.js';
 
 // Initialize Rapier physics
 let world = null;
@@ -84,6 +85,9 @@ scene.add(directionalLight);
 const networkedBolts = [];
 const enemies = [];
 
+// Debris manager for component explosion effects
+const debrisManager = new DebrisManager(scene, world);
+
 window.world = world; // Make world globally available
 window.RAPIER = RAPIER; // Make RAPIER globally available for other scripts
 
@@ -96,6 +100,11 @@ loadRandomMap(scene, world);
 // Player
 const player = new Player(scene, world);
 // Note: player.ship.mesh will be added to scene in the GLTF loader callback within BaseShip constructor
+
+// Set debris manager reference for the player's ship
+if (player.ship && typeof player.ship.setDebrisManager === 'function') {
+    player.ship.setDebrisManager(debrisManager);
+}
 
 // WebSocket event handlers
 ws.onopen = () => {
@@ -360,6 +369,16 @@ function removeOtherPlayer(playerId) {
 
 function spawnEnemy(enemyData) {
     const enemy = new BaseEnemy(scene, world, new THREE.Vector3(enemyData.x, enemyData.y, enemyData.z), 50, 25, enemyData.id);
+    // Set debris manager reference for the enemy
+    enemy.setDebrisManager(debrisManager);
+    enemies.push(enemy);
+    // Note: enemy.mesh will be added to scene in the GLTF loader callback within BaseEnemy constructor
+}
+
+function spawnRespawnedEnemy(enemyData) {
+    const enemy = new BaseEnemy(scene, world, new THREE.Vector3(enemyData.x, enemyData.y, enemyData.z), 50, 25, enemyData.id);
+    // Set debris manager reference for the respawned enemy
+    enemy.setDebrisManager(debrisManager);
     enemies.push(enemy);
     // Note: enemy.mesh will be added to scene in the GLTF loader callback within BaseEnemy constructor
 }
@@ -739,7 +758,7 @@ function handleEnemyComponentDestruction(data) {
 
 function handleEnemyRespawn(enemyData) {
     console.log(`Handling enemy respawn for enemy ${enemyData.id} at position (${enemyData.x}, ${enemyData.y}, ${enemyData.z})`);
-    
+
     // Check if enemy already exists (shouldn't in normal cases, but just in case)
     for (let i = 0; i < enemies.length; i++) {
         if (enemies[i].id === enemyData.id) {
@@ -753,17 +772,9 @@ function handleEnemyRespawn(enemyData) {
             break;
         }
     }
-    
-    // Create a new enemy at the respawned position
-    const enemy = new BaseEnemy(
-        scene,
-        world,
-        new THREE.Vector3(enemyData.x, enemyData.y, enemyData.z),
-        50, // health
-        25, // shield
-        enemyData.id
-    );
-    enemies.push(enemy);
+
+    // Create a new enemy at the respawned position using the dedicated respawn function
+    spawnRespawnedEnemy(enemyData);
     console.log(`Enemy ${enemyData.id} respawned on client`);
 }
 
@@ -837,6 +848,9 @@ function animate() {
 
         // Update enemies
         enemies.forEach(enemy => enemy.update(cappedDeltaTime));
+
+        // Update debris effects
+        debrisManager.update(cappedDeltaTime);
 
         // Clean up dead enemies that are not meant to respawn (server handles respawning)
         for (let i = enemies.length - 1; i >= 0; i--) {
