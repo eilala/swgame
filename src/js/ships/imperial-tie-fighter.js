@@ -580,7 +580,7 @@ export default class ImperialTieFighter {
         // Always play engine sound, but at minimum volume when stopped
         if (accelerationMagnitude < 0.1) {
             // Set to minimum volume when not moving
-            this.engineSound.setVolume(0.01);
+            this.engineSound.setVolume(0.005);
             // Update sound position to follow the ship
             this.engineSound.position.copy(this.mesh.position);
             return;
@@ -595,7 +595,7 @@ export default class ImperialTieFighter {
         // At rest: 0.01, at max speed: 0.0
         const speedMagnitude = player.velocity.length();
         const minVolume = 0.0;
-        const maxVolume = 0.01;
+        const maxVolume = 0.005;
         const maxSpeed = this.maxSpeedForward; // Use max speed as reference
 
         const targetVolume = minVolume + (maxVolume - minVolume) * (1.0 - Math.min(speedMagnitude / maxSpeed, 1.0));

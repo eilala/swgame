@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5175,
-    allowedHosts: ['trudy-overgloomy-jeannie.ngrok-free.dev', 'localhost'],
+    allowedHosts: ['localhost'],
     proxy: {
       '/ws': {
         target: 'ws://localhost:8081',

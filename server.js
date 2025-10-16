@@ -289,10 +289,12 @@ wss.on('connection', (ws) => {
                         client.send(JSON.stringify({
                             type: 'playerDamaged',
                             playerId: message.targetPlayerId,
+                            attackerPlayerId: message.attackerPlayerId,
                             health: targetPlayer.health,
                             shield: targetPlayer.shield,
                             componentHealth: targetPlayer.componentHealth,
-                            isAlive: targetPlayer.isAlive
+                            isAlive: targetPlayer.isAlive,
+                            weaponType: message.weaponType || 'blaster' // Default to blaster if not specified
                         }));
                     }
                 });

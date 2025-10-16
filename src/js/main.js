@@ -12,6 +12,8 @@ import UI from './ui.js';
 import BaseEnemy from './enemies/base-enemy.js';
 import BaseShip from './ships/base-ship.js';
 import ImperialTieFighter from './ships/imperial-tie-fighter.js';
+import LaserImperial from './weapons/laser-imperial.js';
+import ParticleSystem from './components/particle-system.js';
 import DebrisManager from './managers/debris-manager.js';
 
 // Initialize Rapier physics
@@ -105,6 +107,9 @@ const enemies = [];
 
 // Debris manager for component explosion effects
 const debrisManager = new DebrisManager(scene, world);
+
+// Particle system for hit effects and other VFX
+const particleSystem = new ParticleSystem(scene);
 
 window.world = world; // Make world globally available
 window.RAPIER = RAPIER; // Make RAPIER globally available for other scripts
@@ -553,6 +558,26 @@ function handlePlayerDamage(data) {
             player.ship.componentHealth = { ...player.ship.componentHealth, ...data.componentHealth };
         }
 
+        // Create hit effect for local player being damaged
+        if (particleSystem) {
+            // Use ship position as fallback for hit location
+            const hitPosition = player.ship.mesh ? player.ship.mesh.position.clone() : player.position.clone();
+            // Use a random direction for the hit effect
+            const hitDirection = new THREE.Vector3(
+                (Math.random() - 0.5) * 2,
+                (Math.random() - 0.5) * 2,
+                (Math.random() - 0.5) * 2
+            ).normalize();
+            // Use weapon color based on attacker weapon type
+            let damageColor = new THREE.Color(0xff4444); // Default red for damage
+            if (data.weaponType === 'laser') {
+                damageColor = new THREE.Color(0x00ff00); // Green for laser bolts
+            } else if (data.weaponType === 'blaster') {
+                damageColor = new THREE.Color(0x0066ff); // Blue for blaster bolts
+            }
+            particleSystem.createHitEffect(hitPosition, hitDirection, damageColor);
+        }
+
         // Handle component-specific damage for other players
         if (data.componentId && data.componentId !== null) {
             // Apply damage to the other player's component
@@ -633,6 +658,26 @@ function handlePlayerDamage(data) {
                 right_wing: 50
             };
             playerObj.isAlive = data.isAlive;
+
+            // Create hit effect for other player being damaged
+            if (particleSystem && playerObj.mesh) {
+                // Use ship position as fallback for hit location
+                const hitPosition = playerObj.mesh.position.clone();
+                // Use a random direction for the hit effect
+                const hitDirection = new THREE.Vector3(
+                    (Math.random() - 0.5) * 2,
+                    (Math.random() - 0.5) * 2,
+                    (Math.random() - 0.5) * 2
+                ).normalize();
+                // Use weapon color based on attacker weapon type
+                let damageColor = new THREE.Color(0xff4444); // Default red for damage
+                if (data.weaponType === 'laser') {
+                    damageColor = new THREE.Color(0x00ff00); // Green for laser bolts
+                } else if (data.weaponType === 'blaster') {
+                    damageColor = new THREE.Color(0x0066ff); // Blue for blaster bolts
+                }
+                particleSystem.createHitEffect(hitPosition, hitDirection, damageColor);
+            }
 
             if (!data.isAlive) {
                 // Player died - hide the ship and create debris explosion for the entire ship
@@ -986,6 +1031,9 @@ function animate() {
         // Update debris effects
         debrisManager.update(cappedDeltaTime);
 
+        // Update particle system
+        particleSystem.update(cappedDeltaTime);
+
         // Clean up dead enemies that are not meant to respawn (server handles respawning)
         for (let i = enemies.length - 1; i >= 0; i--) {
             if (enemies[i].isDestroyed()) {
@@ -1131,6 +1179,22 @@ function animate() {
                             // Damage the enemy (with component-specific damage if applicable)
                             const destroyed = enemy.takeDamage(bolt.damage, componentId);
 
+                            // Create hit effect with bolt's color
+                            if (particleSystem && intersect.point) {
+                                // Determine color based on bolt type
+                                let boltColor;
+                                if (bolt instanceof LaserImperial || bolt.constructor.name === 'LaserImperial') {
+                                    boltColor = new THREE.Color(0x00ff00); // Green for laser bolts
+                                } else {
+                                    boltColor = new THREE.Color(0x0066ff); // Blue for blaster bolts
+                                }
+                                particleSystem.createHitEffect(
+                                    intersect.point,
+                                    direction,
+                                    boltColor
+                                );
+                            }
+
                             // Remove the bolt
                             player.ship.primaryWeapon.bolts.splice(i, 1);
                             if (bolt.mesh && bolt.mesh.parent) {
@@ -1164,14 +1228,15 @@ function animate() {
                         componentId = hitObject.userData.componentId;
                     }
 
-                    // Send damage to server for player-to-player hit (with component info)
+                    // Send damage to server for player-to-player hit (with component info and weapon type)
                     if (ws.readyState === WebSocket.OPEN) {
                         ws.send(JSON.stringify({
                             type: 'playerHit',
                             attackerPlayerId: myPlayerId,
                             targetPlayerId: hitObject.userData.playerId,
                             damage: bolt.damage || 10,
-                            componentId: componentId
+                            componentId: componentId,
+                            weaponType: bolt instanceof LaserImperial ? 'laser' : 'blaster'
                         }));
                     }
 
@@ -1227,6 +1292,16 @@ function animate() {
                         // Mark this target as hit by this bolt
                         bolt.userData.hitTargets.add(targetKey);
 
+                        // Create hit effect with blue color for networked bolts hitting player (they are all blaster-type)
+                        if (particleSystem && intersect.point) {
+                            const boltColor = new THREE.Color(0x00aaff); // Blue for blaster bolts
+                            particleSystem.createHitEffect(
+                                intersect.point,
+                                direction,
+                                boltColor
+                            );
+                        }
+
                         // Update the last shield damage time to prevent immediate regeneration
                         const currentTime = Date.now() / 1000; // Convert to seconds
                         player.ship.lastShieldDamageTime = currentTime;
@@ -1280,6 +1355,16 @@ function animate() {
 
                             // Damage the enemy (with component-specific damage if applicable)
                             const destroyed = enemy.takeDamage(10, componentId); // Assuming damage 10 for networked bolts
+
+                            // Create hit effect with blue color for networked bolts (they are all blaster-type)
+                            if (particleSystem && intersect.point) {
+                                const boltColor = new THREE.Color(0x00aaff); // Blue for blaster bolts
+                                particleSystem.createHitEffect(
+                                    intersect.point,
+                                    direction,
+                                    boltColor
+                                );
+                            }
 
                             // Remove the bolt immediately after collision to prevent multiple hits
                             if (bolt.parent) {

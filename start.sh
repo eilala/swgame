@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Kill ngrok tunnel
-pkill ngrok
-
 # Kill Vite development server
 pkill -f "vite"
 
@@ -22,6 +19,3 @@ npm run dev &
 
 # Wait a moment for Vite to start
 sleep 2
-
-# Start ngrok tunnel
-ngrok http 5175

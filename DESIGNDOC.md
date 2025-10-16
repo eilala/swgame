@@ -120,17 +120,6 @@ This is the most critical and complex part. A client-server model is essential t
 
 This project should be built incrementally.
 
-    Phase 3: Real Combat
-
-        Implement health, shields, and damage logic on the server.
-
-        Sync hit detection and destruction events.
-
-        Add player respawning after being destroyed.
-
-        Add the large capital ship models to the scene (still static).
-        Goal: A functional team deathmatch.
-
     Phase 4: The Objective
 
         Implement the capital ship subsystems on the server.
