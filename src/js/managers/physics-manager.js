@@ -143,12 +143,63 @@ export default class PhysicsManager {
         const rigidBodyDesc = window.RAPIER.RigidBodyDesc.kinematicPositionBased();
         const rigidBody = this.world.createRigidBody(rigidBodyDesc);
 
-        // Create collider based on mesh bounding box
-        const box = new THREE.Box3().setFromObject(mesh);
-        const size = box.getSize(new THREE.Vector3());
-        const colliderDesc = window.RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
-        colliderDesc.setCollisionGroups(isLocalPlayer ? 0b0001 : 0b0010); // Different groups for local vs other players
-        const collider = this.world.createCollider(colliderDesc, rigidBody);
+        const vertices = [];
+        const indices = [];
+        let vertexOffset = 0;
+
+        mesh.updateMatrixWorld(true);
+        const rootInverseMatrix = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+        const transformedVertex = new THREE.Vector3();
+        const transformMatrix = new THREE.Matrix4();
+
+        mesh.traverse((child) => {
+            if (!child.isMesh || !child.geometry) return;
+
+            const geometry = child.geometry;
+            const positionAttribute = geometry.attributes.position;
+            if (!positionAttribute) return;
+
+            transformMatrix.copy(child.matrixWorld);
+            transformMatrix.premultiply(rootInverseMatrix);
+
+            for (let i = 0; i < positionAttribute.count; i++) {
+                transformedVertex.fromBufferAttribute(positionAttribute, i);
+                transformedVertex.applyMatrix4(transformMatrix);
+                vertices.push(transformedVertex.x, transformedVertex.y, transformedVertex.z);
+            }
+
+            if (geometry.index) {
+                const indexAttr = geometry.index;
+                for (let i = 0; i < indexAttr.count; i++) {
+                    indices.push(indexAttr.array[i] + vertexOffset);
+                }
+            } else {
+                for (let i = 0; i < positionAttribute.count; i += 3) {
+                    indices.push(vertexOffset + i, vertexOffset + i + 1, vertexOffset + i + 2);
+                }
+            }
+
+            vertexOffset += positionAttribute.count;
+        });
+
+        let collider = null;
+        if (vertices.length > 0 && indices.length > 0) {
+            const verticesArray = new Float32Array(vertices);
+            const indicesArray = new Uint32Array(indices);
+            const colliderDesc = window.RAPIER.ColliderDesc.trimesh(verticesArray, indicesArray);
+            if (window.RAPIER?.ActiveCollisionTypes?.ALL !== undefined) {
+                colliderDesc.setActiveCollisionTypes(window.RAPIER.ActiveCollisionTypes.ALL);
+            }
+            collider = this.world.createCollider(colliderDesc, rigidBody);
+        } else {
+            const box = new THREE.Box3().setFromObject(mesh);
+            const size = box.getSize(new THREE.Vector3());
+            const colliderDesc = window.RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+            if (window.RAPIER?.ActiveCollisionTypes?.ALL !== undefined) {
+                colliderDesc.setActiveCollisionTypes(window.RAPIER.ActiveCollisionTypes.ALL);
+            }
+            collider = this.world.createCollider(colliderDesc, rigidBody);
+        }
 
         // Store reference to mesh and other data
         rigidBody.userData = {
@@ -156,11 +207,17 @@ export default class PhysicsManager {
             isPlayer: true,
             isLocalPlayer: isLocalPlayer,
             playerId: isLocalPlayer ? this.gameState.getPlayerId() : mesh.userData?.playerId,
-            rigidBody: rigidBody // Reference for collision handling
+            rigidBody: rigidBody,
+            collider: collider
         };
 
         this.physicsBodies.set(mesh, rigidBody);
-        return rigidBody;
+        mesh.userData = mesh.userData || {};
+        mesh.userData.rigidBody = rigidBody;
+        mesh.userData.collider = collider;
+        rigidBody.setTranslation(mesh.position, true);
+        rigidBody.setRotation(mesh.quaternion, true);
+        return { rigidBody, collider };
     }
 
     /**
@@ -176,23 +233,80 @@ export default class PhysicsManager {
         const rigidBodyDesc = window.RAPIER.RigidBodyDesc.kinematicPositionBased();
         const rigidBody = this.world.createRigidBody(rigidBodyDesc);
 
-        // Create collider based on mesh bounding box
-        const box = new THREE.Box3().setFromObject(mesh);
-        const size = box.getSize(new THREE.Vector3());
-        const colliderDesc = window.RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
-        colliderDesc.setCollisionGroups(0b0100); // Enemy collision group
-        const collider = this.world.createCollider(colliderDesc, rigidBody);
+        const vertices = [];
+        const indices = [];
+        let vertexOffset = 0;
+
+        mesh.updateMatrixWorld(true);
+        const rootInverseMatrix = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+        const transformedVertex = new THREE.Vector3();
+        const transformMatrix = new THREE.Matrix4();
+
+        mesh.traverse((child) => {
+            if (!child.isMesh || !child.geometry) return;
+
+            const geometry = child.geometry;
+            const positionAttribute = geometry.attributes.position;
+            if (!positionAttribute) return;
+
+            transformMatrix.copy(child.matrixWorld);
+            transformMatrix.premultiply(rootInverseMatrix);
+
+            for (let i = 0; i < positionAttribute.count; i++) {
+                transformedVertex.fromBufferAttribute(positionAttribute, i);
+                transformedVertex.applyMatrix4(transformMatrix);
+                vertices.push(transformedVertex.x, transformedVertex.y, transformedVertex.z);
+            }
+
+            if (geometry.index) {
+                const indexAttr = geometry.index;
+                for (let i = 0; i < indexAttr.count; i++) {
+                    indices.push(indexAttr.array[i] + vertexOffset);
+                }
+            } else {
+                for (let i = 0; i < positionAttribute.count; i += 3) {
+                    indices.push(vertexOffset + i, vertexOffset + i + 1, vertexOffset + i + 2);
+                }
+            }
+
+            vertexOffset += positionAttribute.count;
+        });
+
+        let collider = null;
+        if (vertices.length > 0 && indices.length > 0) {
+            const verticesArray = new Float32Array(vertices);
+            const indicesArray = new Uint32Array(indices);
+            const colliderDesc = window.RAPIER.ColliderDesc.trimesh(verticesArray, indicesArray);
+            if (window.RAPIER?.ActiveCollisionTypes?.ALL !== undefined) {
+                colliderDesc.setActiveCollisionTypes(window.RAPIER.ActiveCollisionTypes.ALL);
+            }
+            collider = this.world.createCollider(colliderDesc, rigidBody);
+        } else {
+            const box = new THREE.Box3().setFromObject(mesh);
+            const size = box.getSize(new THREE.Vector3());
+            const colliderDesc = window.RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+            if (window.RAPIER?.ActiveCollisionTypes?.ALL !== undefined) {
+                colliderDesc.setActiveCollisionTypes(window.RAPIER.ActiveCollisionTypes.ALL);
+            }
+            collider = this.world.createCollider(colliderDesc, rigidBody);
+        }
 
         // Store reference to mesh and other data
         rigidBody.userData = {
             mesh: mesh,
             isEnemy: true,
             enemyId: enemyId,
-            rigidBody: rigidBody
+            rigidBody: rigidBody,
+            collider: collider
         };
 
         this.physicsBodies.set(mesh, rigidBody);
-        return rigidBody;
+        mesh.userData = mesh.userData || {};
+        mesh.userData.rigidBody = rigidBody;
+        mesh.userData.collider = collider;
+        rigidBody.setTranslation(mesh.position, true);
+        rigidBody.setRotation(mesh.quaternion, true);
+        return { rigidBody, collider };
     }
 
     /**

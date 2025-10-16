@@ -82,7 +82,7 @@ export default class ParticleSystem {
                 sprite: sprite,
                 velocity: velocity,
                 lifetime: 0,
-                maxLifetime: 0.5 + Math.random() * 0.2, // 0.5-0.7 seconds
+                maxLifetime: 0.2 + Math.random() * 0.2, // 0.5-0.7 seconds
                 initialScale: sprite.scale.x
             };
 

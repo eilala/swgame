@@ -267,18 +267,80 @@ export default class BaseEnemy {
         const rigidBodyDesc = window.RAPIER.RigidBodyDesc.kinematicPositionBased();
         this.rigidBody = this.world.createRigidBody(rigidBodyDesc);
 
-        // Create a collider based on the mesh's bounding box
-        const box = new THREE.Box3().setFromObject(this.mesh);
-        const size = box.getSize(new THREE.Vector3());
-        const colliderDesc = window.RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
-        colliderDesc.setCollisionGroups(0b0100); // Enemy collision group
-        this.collider = this.world.createCollider(colliderDesc, this.rigidBody);
+        const vertices = [];
+        const indices = [];
+        let vertexOffset = 0;
+
+        this.mesh.updateMatrixWorld(true);
+        const rootInverseMatrix = new THREE.Matrix4().copy(this.mesh.matrixWorld).invert();
+        const transformedVertex = new THREE.Vector3();
+        const transformMatrix = new THREE.Matrix4();
+
+        this.mesh.traverse((child) => {
+            if (!child.isMesh || !child.geometry) return;
+
+            const geometry = child.geometry;
+            const positionAttribute = geometry.attributes.position;
+            if (!positionAttribute) return;
+
+            transformMatrix.copy(child.matrixWorld);
+            transformMatrix.premultiply(rootInverseMatrix);
+
+            for (let i = 0; i < positionAttribute.count; i++) {
+                transformedVertex.fromBufferAttribute(positionAttribute, i);
+                transformedVertex.applyMatrix4(transformMatrix);
+                vertices.push(transformedVertex.x, transformedVertex.y, transformedVertex.z);
+            }
+
+            if (geometry.index) {
+                const indexAttr = geometry.index;
+                for (let i = 0; i < indexAttr.count; i++) {
+                    indices.push(indexAttr.array[i] + vertexOffset);
+                }
+            } else {
+                for (let i = 0; i < positionAttribute.count; i += 3) {
+                    indices.push(vertexOffset + i, vertexOffset + i + 1, vertexOffset + i + 2);
+                }
+            }
+
+            vertexOffset += positionAttribute.count;
+        });
+
+        // Create trimesh collider using the visual mesh geometry
+        if (vertices.length > 0 && indices.length > 0) {
+            const verticesArray = new Float32Array(vertices);
+            const indicesArray = new Uint32Array(indices);
+            const colliderDesc = window.RAPIER.ColliderDesc.trimesh(verticesArray, indicesArray);
+            if (window.RAPIER?.ActiveCollisionTypes?.ALL !== undefined) {
+                colliderDesc.setActiveCollisionTypes(window.RAPIER.ActiveCollisionTypes.ALL);
+            }
+            this.collider = this.world.createCollider(colliderDesc, this.rigidBody);
+            console.log('Trimesh collider created for enemy using visual mesh');
+        } else {
+            // Fallback to bounding box collider
+            const box = new THREE.Box3().setFromObject(this.mesh);
+            const size = box.getSize(new THREE.Vector3());
+            const colliderDesc = window.RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+            if (window.RAPIER?.ActiveCollisionTypes?.ALL !== undefined) {
+                colliderDesc.setActiveCollisionTypes(window.RAPIER.ActiveCollisionTypes.ALL);
+            }
+            this.collider = this.world.createCollider(colliderDesc, this.rigidBody);
+            console.log('Fallback box collider created for enemy');
+        }
+
+        if (this.mesh) {
+            this.mesh.userData = this.mesh.userData || {};
+            this.mesh.userData.rigidBody = this.rigidBody;
+            this.mesh.userData.collider = this.collider;
+        }
 
         // Store reference to the mesh and other data
         this.rigidBody.userData = {
             mesh: this.mesh,
+            collider: this.collider,
             isEnemy: true,
-            enemyId: this.id
+            enemyId: this.id,
+            rigidBody: this.rigidBody
         };
 
         // Position the rigid body at the mesh's position

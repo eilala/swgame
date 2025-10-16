@@ -17,6 +17,12 @@ export default class Player {
     update(controls, deltaTime) {
         // Cap deltaTime to prevent issues when tabbing back in
         const cappedDeltaTime = Math.min(deltaTime, 0.05); // Maximum 50ms per frame
+
+        if (!this.ship) {
+            // Allow basic inertial movement before the ship instance is assigned
+            this.position.add(this.velocity.clone().multiplyScalar(cappedDeltaTime));
+            return;
+        }
         
         // Update time for energy management
         const currentTime = Date.now() / 1000; // Convert to seconds

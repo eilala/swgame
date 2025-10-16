@@ -262,7 +262,7 @@ function spawnOtherPlayer(playerData) {
             scene.add(mesh);
 
             // Create physics body for this player
-            createPlayerRigidBody(mesh, false);
+            const physicsRefs = createPlayerRigidBody(mesh, false);
 
             // Create name label positioned above the model's bounding box
             const canvas = document.createElement('canvas');
@@ -297,7 +297,9 @@ function spawnOtherPlayer(playerData) {
                 maxHealth: playerData.maxHealth || 110,
                 shield: playerData.shield || 0,
                 maxShield: playerData.maxShield || 0,
-                isAlive: playerData.isAlive !== false
+                isAlive: playerData.isAlive !== false,
+                rigidBody: physicsRefs?.rigidBody || null,
+                collider: physicsRefs?.collider || null
             };
 
             // Hide dead players initially
@@ -344,7 +346,7 @@ function spawnOtherPlayer(playerData) {
             });
 
             // Create physics body for this player (fallback case)
-            createPlayerRigidBody(mesh, false);
+            const physicsRefs = createPlayerRigidBody(mesh, false);
 
             otherPlayers[playerId] = {
                 mesh,
@@ -354,7 +356,9 @@ function spawnOtherPlayer(playerData) {
                 maxHealth: playerData.maxHealth || 110,
                 shield: playerData.shield || 0,
                 maxShield: playerData.maxShield || 0,
-                isAlive: playerData.isAlive !== false
+                isAlive: playerData.isAlive !== false,
+                rigidBody: physicsRefs?.rigidBody || null,
+                collider: physicsRefs?.collider || null
             };
 
             // Hide dead players initially
@@ -371,6 +375,16 @@ function updateOtherPlayer(data) {
     if (playerObj) {
         playerObj.mesh.position.set(data.x, data.y, data.z);
         playerObj.mesh.quaternion.set(data.rotationX, data.rotationY, data.rotationZ, data.rotationW || 1);
+
+        if (playerObj.rigidBody) {
+            playerObj.rigidBody.setTranslation({ x: data.x, y: data.y, z: data.z }, true);
+            playerObj.rigidBody.setRotation({
+                x: data.rotationX,
+                y: data.rotationY,
+                z: data.rotationZ,
+                w: data.rotationW || 1
+            }, true);
+        }
 
         // Update name sprite position to follow the player mesh
         if (playerObj.nameSprite) {
@@ -401,6 +415,9 @@ function updateOtherPlayer(data) {
 function removeOtherPlayer(playerId) {
     const playerObj = otherPlayers[String(playerId)];
     if (playerObj) {
+        if (playerObj.rigidBody) {
+            world.removeRigidBody(playerObj.rigidBody);
+        }
         scene.remove(playerObj.mesh);
         if (playerObj.nameSprite) {
             scene.remove(playerObj.nameSprite);
@@ -433,22 +450,83 @@ function createPlayerRigidBody(mesh, isLocalPlayer = false) {
     const rigidBodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased();
     const rigidBody = world.createRigidBody(rigidBodyDesc);
 
-    // Create a collider based on the mesh's bounding box
-    const box = new THREE.Box3().setFromObject(mesh);
-    const size = box.getSize(new THREE.Vector3());
-    const colliderDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
-    colliderDesc.setCollisionGroups(isLocalPlayer ? 0b0001 : 0b0010); // Different collision groups for local vs other players
-    const collider = world.createCollider(colliderDesc, rigidBody);
+    // Collect geometry for a trimesh collider
+    const vertices = [];
+    const indices = [];
+    let vertexOffset = 0;
+
+    mesh.updateMatrixWorld(true);
+    const rootInverseMatrix = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+    const transformedVertex = new THREE.Vector3();
+    const transformMatrix = new THREE.Matrix4();
+
+    mesh.traverse((child) => {
+        if (!child.isMesh || !child.geometry) return;
+
+        const geometry = child.geometry;
+        const positionAttribute = geometry.attributes.position;
+        if (!positionAttribute) return;
+
+        transformMatrix.copy(child.matrixWorld);
+        transformMatrix.premultiply(rootInverseMatrix);
+
+        for (let i = 0; i < positionAttribute.count; i++) {
+            transformedVertex.fromBufferAttribute(positionAttribute, i);
+            transformedVertex.applyMatrix4(transformMatrix);
+            vertices.push(transformedVertex.x, transformedVertex.y, transformedVertex.z);
+        }
+
+        if (geometry.index) {
+            const indexAttr = geometry.index;
+            for (let i = 0; i < indexAttr.count; i++) {
+                indices.push(indexAttr.array[i] + vertexOffset);
+            }
+        } else {
+            for (let i = 0; i < positionAttribute.count; i += 3) {
+                indices.push(vertexOffset + i, vertexOffset + i + 1, vertexOffset + i + 2);
+            }
+        }
+
+        vertexOffset += positionAttribute.count;
+    });
+
+    let collider = null;
+    if (vertices.length > 0 && indices.length > 0) {
+        const verticesArray = new Float32Array(vertices);
+        const indicesArray = new Uint32Array(indices);
+        const colliderDesc = RAPIER.ColliderDesc.trimesh(verticesArray, indicesArray);
+        if (RAPIER.ActiveCollisionTypes?.ALL !== undefined) {
+            colliderDesc.setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.ALL);
+        }
+        collider = world.createCollider(colliderDesc, rigidBody);
+    } else {
+        const box = new THREE.Box3().setFromObject(mesh);
+        const size = box.getSize(new THREE.Vector3());
+        const colliderDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+        if (RAPIER.ActiveCollisionTypes?.ALL !== undefined) {
+            colliderDesc.setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.ALL);
+        }
+        collider = world.createCollider(colliderDesc, rigidBody);
+    }
 
     // Store reference to the mesh and other data
     rigidBody.userData = {
         mesh: mesh,
         isPlayer: true,
         isLocalPlayer: isLocalPlayer,
-        playerId: isLocalPlayer ? myPlayerId : mesh.userData?.playerId
+        playerId: isLocalPlayer ? myPlayerId : mesh.userData?.playerId,
+        collider: collider,
+        rigidBody: rigidBody
     };
 
-    return rigidBody;
+    mesh.userData = mesh.userData || {};
+    mesh.userData.rigidBody = rigidBody;
+    mesh.userData.collider = collider;
+
+    rigidBody.setTranslation(mesh.position, true);
+    rigidBody.setRotation(mesh.quaternion, true);
+
+    return { rigidBody, collider };
 }
 function handleNetworkedFire(data) {
     // Create a networked blaster bolt - but limit creation rate to prevent flooding
@@ -731,7 +809,7 @@ function handlePlayerRespawn(data) {
         player.isAlive = data.isAlive;
 
         // Remove the old mesh from scene if it exists
-        if (player.ship.mesh && player.ship.mesh.parent) {
+        if (player.ship && player.ship.mesh && player.ship.mesh.parent) {
             player.ship.mesh.parent.remove(player.ship.mesh);
         }
 
@@ -1000,8 +1078,10 @@ function animate() {
 
         controls.update(cappedDeltaTime);
         player.update(controls, cappedDeltaTime);
-        // Ship update is done here, which includes weapon updates
-        player.ship.update(player, cappedDeltaTime);
+        if (player.ship && player.ship.update) {
+            // Ship update is done here, which includes weapon updates
+            player.ship.update(player, cappedDeltaTime);
+        }
         playerCamera.update();
         ui.update();
         
@@ -1058,7 +1138,7 @@ function animate() {
         }
         
         // Get active blaster bolts from the ship's weapon
-        const shipBolts = player.ship.primaryWeapon.getBolts();
+        const shipBolts = player.ship?.primaryWeapon?.getBolts() || [];
         
         // Update and add any new bolts to the scene if they're not already added
         shipBolts.forEach(bolt => {
@@ -1110,7 +1190,9 @@ function animate() {
         });
 
         // Add player meshes (local and other players)
-        if (player.ship.mesh && player.ship.mesh.parent) collisionTargets.push(player.ship.mesh);
+        if (player.ship && player.ship.mesh && player.ship.mesh.parent) {
+            collisionTargets.push(player.ship.mesh);
+        }
         Object.values(otherPlayers).forEach(playerObj => {
             if (playerObj.mesh && playerObj.isAlive && playerObj.mesh.parent) collisionTargets.push(playerObj.mesh);
         });
@@ -1153,16 +1235,21 @@ function animate() {
 
                 // Check if bolt hit the shooter's own ship
                 // Only apply this check if it's not the owner's own bolt, or if the bolt is past the grace period
-                if ((hitObject === player.ship.mesh || (hitObject.userData && hitObject.userData.isPlayer)) &&
-                    !(bolt.ownerId === myPlayerId && bolt.age < 0.3)) { // Don't damage self during grace period
-                    // Remove the bolt
-                    player.ship.primaryWeapon.bolts.splice(i, 1);
-                    if (bolt.mesh && bolt.mesh.parent) {
-                        bolt.mesh.parent.remove(bolt.mesh);
+                if ((player.ship && hitObject === player.ship.mesh) || (hitObject.userData && hitObject.userData.isPlayer)) {
+                    if (!(bolt.ownerId === myPlayerId && bolt.age < 0.3)) { // Don't damage self during grace period
+                        const weapon = player.ship?.primaryWeapon;
+                        if (weapon) {
+                            weapon.bolts.splice(i, 1);
+                        }
+                        if (bolt.mesh && bolt.mesh.parent) {
+                            bolt.mesh.parent.remove(bolt.mesh);
+                        }
+                        hitSomething = true;
+                        break;
                     }
-                    hitSomething = true;
-                    break;
                 }
+
+                if (!player.ship) continue;
 
                 // Check collision with enemies first
                 if (hitObject.userData && hitObject.userData.isEnemy) {
@@ -1280,8 +1367,13 @@ function animate() {
 
                 // Check if networked bolt hit the local player
                 // Only apply this check if it's not the owner's own bolt, or if the bolt is past the grace period
-                if ((hitObject === player.ship.mesh || (hitObject.userData && hitObject.userData.isPlayer)) &&
+                const isLocalShip = player.ship && hitObject === player.ship.mesh;
+                if ((isLocalShip || (hitObject.userData && hitObject.userData.isPlayer)) &&
                     !(bolt.userData.ownerId === myPlayerId && bolt.userData.age < 0.2)) { // Don't damage self during grace period
+
+                    if (!player.ship) {
+                        continue;
+                    }
 
                     // Check if this bolt has already hit this target
                     const targetKey = `player_${myPlayerId}`;
@@ -1459,9 +1551,13 @@ function checkCollision(mesh1, mesh2) {
 
 // Simple collision detection for player-to-player and player-to-enemy collisions only
 function detectAndResolveCollisions() {
+    if (!player.ship || !player.ship.mesh) {
+        return;
+    }
+
     // Check collisions between local player and other players
     Object.values(otherPlayers).forEach(playerObj => {
-        if (playerObj.mesh && playerObj.isAlive && player.ship.mesh) {
+        if (playerObj.mesh && playerObj.isAlive) {
             if (simpleSphereCollisionCheck(player.ship.mesh, playerObj.mesh)) {
                 resolveSimpleCollision(player.ship.mesh, playerObj.mesh);
             }
@@ -1470,7 +1566,7 @@ function detectAndResolveCollisions() {
 
     // Check collisions between local player and enemies
     enemies.forEach(enemy => {
-        if (enemy.mesh && player.ship.mesh) {
+        if (enemy.mesh) {
             if (simpleSphereCollisionCheck(player.ship.mesh, enemy.mesh)) {
                 resolveSimpleCollision(player.ship.mesh, enemy.mesh);
             }

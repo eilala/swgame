@@ -10,6 +10,8 @@ export default class CollisionManager {
         this.collisionTargets = [];
         this.localBolts = [];
         this.networkedBolts = [];
+        this.safeSeparationDistance = 1.0;
+        this.penetrationBuffer = 0.05;
     }
 
     /**
@@ -69,99 +71,46 @@ export default class CollisionManager {
     }
 
     /**
-     * Handle entity collision using ISD-style logic adapted for two dynamic objects
+     * Handle entity collision using accurate mesh-based collision detection
      */
     handleEntityCollision(mesh1, mesh2) {
+        const collisionResult = this.accurateCollisionCheck(mesh1, mesh2);
+
+        const resolved = this.resolveAccurateCollision(
+            mesh1,
+            mesh2,
+            collisionResult.normal,
+            collisionResult.penetrationDepth,
+            collisionResult.separationDistance
+        );
+
+        if (resolved) {
+            return;
+        }
+
+        // Fallback: separate based on center-to-center distance if still overlapping
         const pos1 = new THREE.Vector3();
         const pos2 = new THREE.Vector3();
         mesh1.getWorldPosition(pos1);
         mesh2.getWorldPosition(pos2);
+        const distance = pos1.distanceTo(pos2);
 
-        const checkDirections = [
-            new THREE.Vector3(1, 0, 0),   // Right
-            new THREE.Vector3(-1, 0, 0),  // Left
-            new THREE.Vector3(0, 1, 0),   // Up
-            new THREE.Vector3(0, -1, 0),  // Down
-            new THREE.Vector3(0, 0, 1),   // Forward
-            new THREE.Vector3(0, 0, -1),  // Back
-        ];
+        // Use a threshold that ensures ships don't overlap significantly
+        const minSafeDistance = 2.0; // Increased for better fallback
+        if (distance < minSafeDistance) {
+            const separationDirection = new THREE.Vector3().subVectors(pos2, pos1).normalize();
+            const separationDistance = (minSafeDistance - distance) * 0.8;
 
-        let minDistance1 = Infinity;
-        let minDistance2 = Infinity;
-        let closestNormal1 = new THREE.Vector3();
-        let closestNormal2 = new THREE.Vector3();
-        let needsCorrection = false;
+            mesh1.position.addScaledVector(separationDirection, -separationDistance * 0.5);
+            mesh2.position.addScaledVector(separationDirection, separationDistance * 0.5);
 
-        // Check proximity from mesh1 to mesh2
-        for (const direction of checkDirections) {
-            const raycaster = new THREE.Raycaster(pos1, direction, 0, 4);
-            const intersects = raycaster.intersectObject(mesh2, true);
+            // Update physics bodies
+            this.updateMeshRigidBody(mesh1);
+            this.updateMeshRigidBody(mesh2);
 
-            if (intersects.length > 0) {
-                const intersection = intersects[0];
-                if (intersection.distance < minDistance1) {
-                    minDistance1 = intersection.distance;
-                    needsCorrection = true;
-                    closestNormal1.copy(intersection.face ? intersection.face.normal : direction);
-                    if (intersection.face) {
-                        closestNormal1.transformDirection(mesh2.matrixWorld);
-                    }
-                }
-            }
-        }
-
-        // Check proximity from mesh2 to mesh1
-        for (const direction of checkDirections) {
-            const raycaster = new THREE.Raycaster(pos2, direction, 0, 4);
-            const intersects = raycaster.intersectObject(mesh1, true);
-
-            if (intersects.length > 0) {
-                const intersection = intersects[0];
-                if (intersection.distance < minDistance2) {
-                    minDistance2 = intersection.distance;
-                    needsCorrection = true;
-                    closestNormal2.copy(intersection.face ? intersection.face.normal : direction);
-                    if (intersection.face) {
-                        closestNormal2.transformDirection(mesh1.matrixWorld);
-                    }
-                }
-            }
-        }
-
-        // Apply collision correction for both entities
-        if (needsCorrection) {
-            const safeDistance = 3.0;
-            const effectiveMinDistance = Math.min(minDistance1, minDistance2);
-
-            if (effectiveMinDistance < 2.8) {
-                const correctionNeeded = safeDistance - effectiveMinDistance;
-
-                if (correctionNeeded > 0) {
-                    const interpolationFactor = 0.3;
-
-                    // Apply correction to mesh1 using closestNormal1
-                    if (minDistance1 < 2.8) {
-                        const interpolatedCorrection1 = correctionNeeded * interpolationFactor;
-                        const correctionVector1 = closestNormal1.clone().multiplyScalar(interpolatedCorrection1);
-                        mesh1.position.add(correctionVector1);
-
-                        // Reduce velocity toward surface for entity1
-                        this.applyVelocityCorrection(mesh1, closestNormal1);
-                        this.updateRigidBodyPosition(mesh1, mesh1.position);
-                    }
-
-                    // Apply correction to mesh2 using closestNormal2 (opposite direction)
-                    if (minDistance2 < 2.8) {
-                        const interpolatedCorrection2 = correctionNeeded * interpolationFactor;
-                        const correctionVector2 = closestNormal2.clone().multiplyScalar(-interpolatedCorrection2);
-                        mesh2.position.add(correctionVector2);
-
-                        // Reduce velocity toward surface for entity2
-                        this.applyVelocityCorrection(mesh2, closestNormal2);
-                        this.updateRigidBodyPosition(mesh2, mesh2.position);
-                    }
-                }
-            }
+            // Apply velocity damping
+            this.applyVelocityCorrection(mesh1, separationDirection);
+            this.applyVelocityCorrection(mesh2, separationDirection.clone().negate());
         }
     }
 
@@ -169,37 +118,21 @@ export default class CollisionManager {
      * Apply velocity correction to prevent phasing through collision surface
      */
     applyVelocityCorrection(mesh, normal) {
-        // Find the entity associated with this mesh
-        let entity = null;
-        if (this.gameState.player && this.gameState.player.ship && this.gameState.player.ship.mesh === mesh) {
-            entity = this.gameState.player;
-        } else {
-            for (const [playerId, playerObj] of Object.entries(this.gameState.otherPlayers)) {
-                if (playerObj.mesh === mesh) {
-                    entity = playerObj;
-                    break;
-                }
-            }
-            if (!entity) {
-                for (const enemy of this.gameState.enemies) {
-                    if (enemy.mesh === mesh) {
-                        entity = enemy;
-                        break;
-                    }
-                }
-            }
-        }
+        const physicsData = this.getEntityPhysicsData(mesh);
+        const entity = physicsData?.entity;
+        const rigidBody = physicsData?.rigidBody;
 
         if (entity && entity.velocity) {
             const normalDotVelocity = entity.velocity.dot(normal);
             if (normalDotVelocity > 0) {
-                const velocityReduction = Math.min(normalDotVelocity * 0.3, normalDotVelocity);
+                // Stronger velocity reduction to prevent phasing through surfaces
+                const velocityReduction = Math.min(normalDotVelocity * 0.8, normalDotVelocity);
                 const velocityCorrection = normal.clone().multiplyScalar(velocityReduction);
                 entity.velocity.sub(velocityCorrection);
 
                 // Update rigid body velocity if it exists
-                if (entity.ship && entity.ship.rigidBody) {
-                    entity.ship.rigidBody.setLinvel({
+                if (rigidBody) {
+                    rigidBody.setLinvel({
                         x: entity.velocity.x,
                         y: entity.velocity.y,
                         z: entity.velocity.z
@@ -484,49 +417,160 @@ export default class CollisionManager {
      * Accurate model-based collision check using bounding box and raycasting
      */
     accurateCollisionCheck(mesh1, mesh2) {
+        const result = {
+            collision: false,
+            penetrationDepth: 0,
+            separationDistance: Infinity,
+            normal: new THREE.Vector3()
+        };
+
+        if (!mesh1 || !mesh2) {
+            return result;
+        }
+
+        const bb1 = new THREE.Box3().setFromObject(mesh1);
+        const bb2 = new THREE.Box3().setFromObject(mesh2);
+
+        if (!bb1.intersectsBox(bb2)) {
+            return result;
+        }
+
         const pos1 = new THREE.Vector3();
         const pos2 = new THREE.Vector3();
         mesh1.getWorldPosition(pos1);
         mesh2.getWorldPosition(pos2);
 
-        // First check if bounding boxes intersect for performance
-        const bb1 = new THREE.Box3().setFromObject(mesh1);
-        const bb2 = new THREE.Box3().setFromObject(mesh2);
+        const world = this.gameState.world;
+        const colliderInfo1 = this.getEntityPhysicsData(mesh1);
+        const colliderInfo2 = this.getEntityPhysicsData(mesh2);
+        const collider1 = colliderInfo1?.collider;
+        const collider2 = colliderInfo2?.collider;
 
-        if (!bb1.intersectsBox(bb2)) {
-            return { collision: false, minDistance: Infinity, normal: new THREE.Vector3() };
+        if (collider1 && collider2 && world && world.narrowPhase) {
+            world.narrowPhase.contactPair(collider1.handle, collider2.handle, (manifold, flipped) => {
+                const manifoldNormal = manifold.normal();
+                const worldNormal = new THREE.Vector3(manifoldNormal.x, manifoldNormal.y, manifoldNormal.z);
+                if (flipped) {
+                    worldNormal.negate();
+                }
+
+                for (let i = 0; i < manifold.numContacts(); i++) {
+                    const distance = manifold.contactDist(i);
+
+                    if (distance < 0) {
+                        const penetration = -distance;
+                        if (penetration > result.penetrationDepth) {
+                            result.penetrationDepth = penetration;
+                            result.normal.copy(worldNormal);
+                        }
+                        result.collision = true;
+                    } else if (distance < result.separationDistance) {
+                        result.separationDistance = distance;
+                        if (!result.collision) {
+                            result.normal.copy(worldNormal);
+                        }
+                    }
+                }
+            });
+
+            if (result.collision || result.separationDistance !== Infinity) {
+                if (result.normal.lengthSq() === 0) {
+                    result.normal.subVectors(pos2, pos1).normalize();
+                }
+                return result;
+            }
         }
 
+        if (collider1 && collider2) {
+            try {
+                const translation1 = collider1.translation();
+                const rotation1 = collider1.rotation();
+                const translation2 = collider2.translation();
+                const rotation2 = collider2.rotation();
+                const shape1 = collider1.shape;
+                const shape2 = collider2.shape;
+
+                const contact = shape1.contactShape(
+                    translation1,
+                    rotation1,
+                    shape2,
+                    translation2,
+                    rotation2,
+                    this.safeSeparationDistance
+                );
+
+                if (contact) {
+                    const contactNormal = new THREE.Vector3(contact.normal1.x, contact.normal1.y, contact.normal1.z);
+                    const hasNormal = contactNormal.lengthSq() > 0;
+                    if (hasNormal) {
+                        contactNormal.normalize();
+                    }
+                    if (contact.distance < 0) {
+                        const penetration = -contact.distance;
+                        if (penetration > result.penetrationDepth) {
+                            result.penetrationDepth = penetration;
+                            if (hasNormal) {
+                                result.normal.copy(contactNormal);
+                            }
+                        }
+                        result.collision = true;
+                    } else if (contact.distance < result.separationDistance) {
+                        result.separationDistance = contact.distance;
+                        if (!result.collision && hasNormal) {
+                            result.normal.copy(contactNormal);
+                        }
+                    }
+
+                    if (result.collision || result.separationDistance !== Infinity) {
+                        if (result.normal.lengthSq() === 0) {
+                            result.normal.subVectors(pos2, pos1).normalize();
+                        }
+                        return result;
+                    }
+                }
+            } catch (error) {
+                console.warn('Shape contact computation failed:', error);
+            }
+        }
+
+        // Fallback: raycast sampling across both meshes
+        const mesh1Children = [];
+        const mesh2Children = [];
+
+        mesh1.traverse((child) => {
+            if (child.isMesh && child.geometry) {
+                mesh1Children.push(child);
+            }
+        });
+
+        mesh2.traverse((child) => {
+            if (child.isMesh && child.geometry) {
+                mesh2Children.push(child);
+            }
+        });
+
         const checkDirections = [
-            new THREE.Vector3(1, 0, 0),   // Right
-            new THREE.Vector3(-1, 0, 0),  // Left
-            new THREE.Vector3(0, 1, 0),   // Up
-            new THREE.Vector3(0, -1, 0),  // Down
-            new THREE.Vector3(0, 0, 1),   // Forward
-            new THREE.Vector3(0, 0, -1),  // Back
-            // Add diagonal directions for better coverage
-            new THREE.Vector3(1, 1, 0).normalize(),   // Up-right
-            new THREE.Vector3(-1, 1, 0).normalize(),  // Up-left
-            new THREE.Vector3(1, -1, 0).normalize(),  // Down-right
-            new THREE.Vector3(-1, -1, 0).normalize(), // Down-left
-            new THREE.Vector3(1, 0, 1).normalize(),   // Forward-right
-            new THREE.Vector3(-1, 0, 1).normalize(),  // Forward-left
-            new THREE.Vector3(1, 0, -1).normalize(),  // Back-right
-            new THREE.Vector3(-1, 0, -1).normalize(), // Back-left
-            new THREE.Vector3(0, 1, 1).normalize(),   // Forward-up
-            new THREE.Vector3(0, -1, 1).normalize(),  // Forward-down
-            new THREE.Vector3(0, 1, -1).normalize(),  // Back-up
-            new THREE.Vector3(0, -1, -1).normalize(), // Back-down
+            new THREE.Vector3(1, 0, 0),
+            new THREE.Vector3(-1, 0, 0),
+            new THREE.Vector3(0, 1, 0),
+            new THREE.Vector3(0, -1, 0),
+            new THREE.Vector3(0, 0, 1),
+            new THREE.Vector3(0, 0, -1),
+            new THREE.Vector3(1, 1, 0).normalize(),
+            new THREE.Vector3(-1, 1, 0).normalize(),
+            new THREE.Vector3(1, -1, 0).normalize(),
+            new THREE.Vector3(-1, -1, 0).normalize(),
+            new THREE.Vector3(0, 1, 1).normalize(),
+            new THREE.Vector3(0, -1, 1).normalize(),
         ];
 
         let minDistance = Infinity;
         let closestNormal = new THREE.Vector3();
         let hasCollision = false;
 
-        // Check from mesh1 to mesh2
         for (const direction of checkDirections) {
-            const raycaster = new THREE.Raycaster(pos1, direction, 0, 5);
-            const intersects = raycaster.intersectObject(mesh2, true);
+            const raycaster = new THREE.Raycaster(pos1, direction, 0, 4);
+            const intersects = raycaster.intersectObjects(mesh2Children, false);
 
             if (intersects.length > 0) {
                 const intersection = intersects[0];
@@ -535,17 +579,16 @@ export default class CollisionManager {
                     hasCollision = true;
                     closestNormal.copy(intersection.face ? intersection.face.normal : direction);
                     if (intersection.face) {
-                        closestNormal.transformDirection(mesh2.matrixWorld);
+                        closestNormal.transformDirection(intersection.object.matrixWorld);
                     }
                 }
             }
         }
 
-        // Check from mesh2 to mesh1 (reverse directions for symmetry)
         const reverseDirections = checkDirections.map(dir => dir.clone().negate());
         for (const direction of reverseDirections) {
-            const raycaster = new THREE.Raycaster(pos2, direction, 0, 5);
-            const intersects = raycaster.intersectObject(mesh1, true);
+            const raycaster = new THREE.Raycaster(pos2, direction, 0, 4);
+            const intersects = raycaster.intersectObjects(mesh1Children, false);
 
             if (intersects.length > 0) {
                 const intersection = intersects[0];
@@ -554,84 +597,123 @@ export default class CollisionManager {
                     hasCollision = true;
                     closestNormal.copy(intersection.face ? intersection.face.normal : direction);
                     if (intersection.face) {
-                        closestNormal.transformDirection(mesh1.matrixWorld);
+                        closestNormal.transformDirection(intersection.object.matrixWorld);
                     }
-                    closestNormal.negate(); // Reverse because we're checking from the other side
+                    closestNormal.negate();
                 }
             }
         }
 
-        return { collision: hasCollision, minDistance, normal: closestNormal };
+        if (hasCollision) {
+            result.collision = true;
+            result.separationDistance = minDistance;
+            result.penetrationDepth = Math.max(0, this.safeSeparationDistance - minDistance);
+            result.normal.copy(closestNormal.normalize());
+            return result;
+        }
+
+        result.normal.subVectors(pos2, pos1).normalize();
+        return result;
     }
 
     /**
-     * Resolve accurate collision using model-based raycasting
+     * Resolve accurate collision using Rapier contact data or fallback normals
      */
-    resolveAccurateCollision(mesh1, mesh2, normal, minDistance) {
-        const safeDistance = 1.8; // Reduced for ship-to-ship collisions (ISD uses 3.0)
+    resolveAccurateCollision(mesh1, mesh2, normal, penetrationDepth = 0, separationDistance = Infinity) {
+        if (!mesh1 || !mesh2 || !normal || normal.lengthSq() === 0) {
+            return false;
+        }
 
-        if (minDistance < safeDistance) {
-            const correctionNeeded = safeDistance - minDistance;
-            const interpolationFactor = 0.5; // Increased for more responsive separation
-            const interpolatedCorrection = correctionNeeded * interpolationFactor;
-            const correctionVector = normal.clone().multiplyScalar(interpolatedCorrection);
+        const direction = normal.clone().normalize();
+        let resolved = false;
 
-            // Apply corrections
-            mesh1.position.add(correctionVector);
-            mesh2.position.sub(correctionVector);
+        if (penetrationDepth > 0) {
+            const correctionAmount = penetrationDepth + this.penetrationBuffer;
+            mesh1.position.addScaledVector(direction, -correctionAmount * 0.5);
+            mesh2.position.addScaledVector(direction, correctionAmount * 0.5);
 
-            // Update physics bodies and velocities if they exist
-            this.updateRigidBodyPositionAndVelocity(mesh1, mesh1.position, normal);
-            this.updateRigidBodyPositionAndVelocity(mesh2, mesh2.position, normal.negate());
+            this.updateMeshRigidBody(mesh1);
+            this.updateMeshRigidBody(mesh2);
+
+            this.applyVelocityCorrection(mesh1, direction);
+            this.applyVelocityCorrection(mesh2, direction.clone().negate());
+
+            resolved = true;
+        } else if (separationDistance !== Infinity && separationDistance < this.safeSeparationDistance) {
+            const correctionNeeded = this.safeSeparationDistance - separationDistance;
+            if (correctionNeeded > 0) {
+                mesh1.position.addScaledVector(direction, -correctionNeeded * 0.5);
+                mesh2.position.addScaledVector(direction, correctionNeeded * 0.5);
+
+                this.updateMeshRigidBody(mesh1);
+                this.updateMeshRigidBody(mesh2);
+
+                this.applyVelocityCorrection(mesh1, direction);
+                this.applyVelocityCorrection(mesh2, direction.clone().negate());
+
+                resolved = true;
+            }
+        }
+
+        return resolved;
+    }
+
+    /**
+     * Update rigid body position for a mesh
+     */
+    updateMeshRigidBody(mesh) {
+        const rigidBody = this.getEntityPhysicsData(mesh)?.rigidBody;
+
+        if (rigidBody) {
+            rigidBody.setTranslation(mesh.position, true);
         }
     }
 
     /**
-     * Update rigid body position and velocity
+     * Gather physics-related references for a mesh
      */
-    updateRigidBodyPositionAndVelocity(mesh, position, collisionNormal) {
-        // Find the entity associated with this mesh
-        let entity = null;
-        let isPlayer = false;
+    getEntityPhysicsData(mesh) {
+        if (!mesh) return null;
+
         if (this.gameState.player && this.gameState.player.ship && this.gameState.player.ship.mesh === mesh) {
-            entity = this.gameState.player;
-            isPlayer = true;
-        } else {
-            for (const [playerId, playerObj] of Object.entries(this.gameState.otherPlayers)) {
-                if (playerObj.mesh === mesh) {
-                    entity = playerObj;
-                    break;
-                }
-            }
-            if (!entity) {
-                for (const enemy of this.gameState.enemies) {
-                    if (enemy.mesh === mesh) {
-                        entity = enemy;
-                        break;
-                    }
-                }
+            return {
+                entity: this.gameState.player,
+                rigidBody: this.gameState.player.ship.rigidBody,
+                collider: this.gameState.player.ship.collider,
+                type: 'player'
+            };
+        }
+
+        for (const playerObj of Object.values(this.gameState.otherPlayers)) {
+            if (!playerObj) continue;
+
+            const playerMesh = playerObj.mesh || playerObj.ship?.mesh;
+            if (playerMesh === mesh) {
+                const rigidBody = playerObj.rigidBody || playerObj.ship?.rigidBody || playerMesh?.userData?.rigidBody;
+                const collider = playerObj.collider || playerObj.ship?.collider || playerMesh?.userData?.collider;
+                return {
+                    entity: playerObj,
+                    rigidBody,
+                    collider,
+                    type: 'otherPlayer'
+                };
             }
         }
 
-        if (entity && entity.ship && entity.ship.rigidBody) {
-            entity.ship.rigidBody.setTranslation(position, true);
-            entity.position.copy(position);
+        for (const enemy of this.gameState.enemies) {
+            if (!enemy) continue;
 
-            // Reduce velocity toward collision normal to prevent phasing
-            if (isPlayer && this.gameState.player.velocity) {
-                const normalDotVelocity = this.gameState.player.velocity.dot(collisionNormal);
-                if (normalDotVelocity > 0) {
-                    const velocityReduction = Math.min(normalDotVelocity * 0.7, normalDotVelocity);
-                    const velocityCorrection = collisionNormal.clone().multiplyScalar(velocityReduction);
-                    this.gameState.player.velocity.sub(velocityCorrection);
-                    entity.ship.rigidBody.setLinvel({
-                        x: this.gameState.player.velocity.x,
-                        y: this.gameState.player.velocity.y,
-                        z: this.gameState.player.velocity.z
-                    }, true);
-                }
+            if (enemy.mesh === mesh) {
+                return {
+                    entity: enemy,
+                    rigidBody: enemy.rigidBody,
+                    collider: enemy.collider,
+                    type: 'enemy'
+                };
             }
         }
+
+        return null;
     }
 
     /**
