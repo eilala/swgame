@@ -529,7 +529,7 @@ function createPlayerRigidBody(mesh, isLocalPlayer = false) {
     return { rigidBody, collider };
 }
 function handleNetworkedFire(data) {
-    // Create a networked blaster bolt - but limit creation rate to prevent flooding
+    // Create a networked bolt - but limit creation rate to prevent flooding
     const currentTime = Date.now() / 1000;
 
     // Check if we received a fire event recently from this player
@@ -548,18 +548,123 @@ function handleNetworkedFire(data) {
     window.lastFireTime[data.playerId] = currentTime;
 
     if (window.DEBUG_TAB_OUT_BOLTS) {
-        console.log(`[DEBUG] Creating networked bolt from player ${data.playerId}, tabHidden=${document.hidden}, networkedBoltsBefore=${networkedBolts.length}`);
+        console.log(`[DEBUG] Creating networked bolt from player ${data.playerId}, weaponType: ${data.weaponType}, tabHidden=${document.hidden}, networkedBoltsBefore=${networkedBolts.length}`);
     }
 
-    // Create the bolt
-    const geometry = new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8);
-    const material = new THREE.MeshBasicMaterial({
-        color: 0x00aaff, // Blue color for the blaster bolt
-        emissive: 0x0066ff // Make it glow
-    });
-    const boltMesh = new THREE.Mesh(geometry, material);
+    // Determine bolt type and create appropriate visual
+    let boltMesh;
+    let boltColor;
+    let boltSpeed = 60; // Default speed
+    let lifetime = 1; // Default lifetime
 
-    // Orient the cylinder to face the direction of travel
+    if (data.weaponType === 'tie-cannon') {
+        // Create two green laser bolts for Tie Cannon
+        const leftBoltGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8);
+        const leftBoltMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00, // Green color for laser bolt
+            emissive: 0x00ff00 // Make it glow
+        });
+        const leftBoltMesh = new THREE.Mesh(leftBoltGeometry, leftBoltMaterial);
+
+        const rightBoltGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8);
+        const rightBoltMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00, // Green color for laser bolt
+            emissive: 0x00ff00 // Make it glow
+        });
+        const rightBoltMesh = new THREE.Mesh(rightBoltGeometry, rightBoltMaterial);
+
+        // Calculate spread positions like TieCannon does
+        const firingPosition = new THREE.Vector3(data.position.x, data.position.y, data.position.z);
+        const direction = new THREE.Vector3(data.direction.x, data.direction.y, data.direction.z).normalize();
+        const spreadDistance = 0.5; // Approximate spread distance
+
+        // Calculate spread offset perpendicular to firing direction
+        const shipUp = new THREE.Vector3(0, 1, 0);
+        const rightVector = new THREE.Vector3()
+            .crossVectors(direction, shipUp)
+            .normalize()
+            .multiplyScalar(spreadDistance);
+
+        // Position left and right bolts
+        const leftBoltPosition = firingPosition.clone().sub(rightVector);
+        const rightBoltPosition = firingPosition.clone().add(rightVector);
+
+        leftBoltMesh.position.copy(leftBoltPosition);
+        rightBoltMesh.position.copy(rightBoltPosition);
+
+        // Orient both bolts
+        leftBoltMesh.quaternion.setFromUnitVectors(
+            new THREE.Vector3(0, 1, 0),
+            direction
+        );
+        rightBoltMesh.quaternion.setFromUnitVectors(
+            new THREE.Vector3(0, 1, 0),
+            direction
+        );
+
+        // Create userData for both bolts
+        leftBoltMesh.userData = {
+            direction: data.direction,
+            isNetworkedBolt: true,
+            speed: boltSpeed,
+            lifetime: lifetime,
+            age: 0,
+            ownerId: data.playerId,
+            previousPosition: leftBoltPosition.clone(),
+            hitTargets: new Set(),
+            weaponType: 'tie-cannon'
+        };
+        rightBoltMesh.userData = {
+            direction: data.direction,
+            isNetworkedBolt: true,
+            speed: boltSpeed,
+            lifetime: lifetime,
+            age: 0,
+            ownerId: data.playerId,
+            previousPosition: rightBoltPosition.clone(),
+            hitTargets: new Set(),
+            weaponType: 'tie-cannon'
+        };
+
+        // Add both bolts to scene and array
+        scene.add(leftBoltMesh);
+        scene.add(rightBoltMesh);
+        networkedBolts.push(leftBoltMesh, rightBoltMesh);
+
+        // Play firing sound for Tie Cannon
+        if (!document.hidden && laserAudioBuffer) {
+            try {
+                const sound = new THREE.PositionalAudio(audioListener);
+                sound.setBuffer(laserAudioBuffer);
+                sound.setRefDistance(20);
+                sound.setVolume(0.03);
+                sound.position.copy(firingPosition);
+                scene.add(sound);
+                sound.play();
+                setTimeout(() => {
+                    if (sound.parent) {
+                        sound.parent.remove(sound);
+                    }
+                }, 1000);
+            } catch (error) {
+                console.warn('Failed to play networked Tie Cannon sound:', error);
+            }
+        }
+
+        // Skip the rest of the function since we handled both bolts
+        return;
+    } else {
+        // Default to blaster bolt for other weapon types
+        const geometry = new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8);
+        const material = new THREE.MeshBasicMaterial({
+            color: 0x00aaff, // Blue color for the blaster bolt
+            emissive: 0x0066ff // Make it glow
+        });
+        boltMesh = new THREE.Mesh(geometry, material);
+        boltColor = new THREE.Color(0x00aaff);
+    }
+
+    // Orient the bolt
     boltMesh.quaternion.setFromUnitVectors(
         new THREE.Vector3(0, 1, 0), // Default cylinder orientation (Y-axis)
         new THREE.Vector3(data.direction.x, data.direction.y, data.direction.z).normalize()
@@ -569,6 +674,28 @@ function handleNetworkedFire(data) {
     boltMesh.position.copy(data.position);
     const previousPosition = new THREE.Vector3(data.position.x, data.position.y, data.position.z); // Store initial position as Vector3
 
+    boltMesh.userData = {
+        direction: data.direction,
+        isNetworkedBolt: true,
+        speed: boltSpeed,
+        lifetime: lifetime,
+        age: 0,
+        ownerId: data.playerId,
+        previousPosition: initialPosition,
+        hitTargets: new Set(),
+        weaponType: data.weaponType || 'blaster'
+    };
+
+    // Orient the cylinder to face the direction of travel
+    boltMesh.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0), // Default cylinder orientation (Y-axis)
+        new THREE.Vector3(data.direction.x, data.direction.y, data.direction.z).normalize()
+    );
+
+    // Position the bolt at the given position
+    boltMesh.position.copy(data.position);
+    const initialPosition = new THREE.Vector3(data.position.x, data.position.y, data.position.z); // Store initial position as Vector3
+
     boltMesh.userData = { direction: data.direction, isNetworkedBolt: true, speed: 60, lifetime: 1, age: 0, ownerId: data.playerId, previousPosition: previousPosition, hitTargets: new Set() };
     scene.add(boltMesh);
     networkedBolts.push(boltMesh);
@@ -577,7 +704,7 @@ function handleNetworkedFire(data) {
         console.log(`[DEBUG] Created networked bolt, total now: ${networkedBolts.length}`);
     }
 
-    // Play firing sound at the bolt's position (only if tab is visible)
+    // Play firing sound for blaster bolts
     if (!document.hidden && laserAudioBuffer) {
         try {
             // Create positional audio source

@@ -302,6 +302,7 @@ export default class TieCannon {
                 type: 'fire',
                 direction: { x: direction.x, y: direction.y, z: direction.z },
                 position: { x: leftPosition.x, y: leftPosition.y, z: leftPosition.z }, // Use left position as primary
+                weaponType: 'tie-cannon'
             }));
         }
     }

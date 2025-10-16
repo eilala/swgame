@@ -126,7 +126,8 @@ wss.on('connection', (ws) => {
                         type: 'fire',
                         playerId: playerId,
                         direction: message.direction,
-                        position: message.position
+                        position: message.position,
+                        weaponType: message.weaponType || 'blaster'
                     }));
                 }
             });
