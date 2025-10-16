@@ -36,8 +36,8 @@ export default class CollisionManager {
         // Player vs other players
         if (this.gameState.player && this.gameState.player.ship.mesh) {
             otherPlayers.forEach(playerObj => {
-                if (playerObj.mesh && this.simpleSphereCollisionCheck(this.gameState.player.ship.mesh, playerObj.mesh)) {
-                    this.resolveSimpleCollision(this.gameState.player.ship.mesh, playerObj.mesh);
+                if (playerObj.mesh) {
+                    this.handleEntityCollision(this.gameState.player.ship.mesh, playerObj.mesh);
                 }
             });
         }
@@ -45,9 +45,7 @@ export default class CollisionManager {
         // Player vs enemies
         this.gameState.enemies.forEach(enemy => {
             if (this.gameState.player && this.gameState.player.ship.mesh && enemy.mesh) {
-                if (this.simpleSphereCollisionCheck(this.gameState.player.ship.mesh, enemy.mesh)) {
-                    this.resolveSimpleCollision(this.gameState.player.ship.mesh, enemy.mesh);
-                }
+                this.handleEntityCollision(this.gameState.player.ship.mesh, enemy.mesh);
             }
         });
 
@@ -56,9 +54,7 @@ export default class CollisionManager {
             if (playerObj.mesh) {
                 this.gameState.enemies.forEach(enemy => {
                     if (enemy.mesh) {
-                        if (this.simpleSphereCollisionCheck(playerObj.mesh, enemy.mesh)) {
-                            this.resolveSimpleCollision(playerObj.mesh, enemy.mesh);
-                        }
+                        this.handleEntityCollision(playerObj.mesh, enemy.mesh);
                     }
                 });
             }
@@ -67,8 +63,147 @@ export default class CollisionManager {
         // Other players vs other players
         for (let i = 0; i < otherPlayers.length; i++) {
             for (let j = i + 1; j < otherPlayers.length; j++) {
-                if (this.simpleSphereCollisionCheck(otherPlayers[i].mesh, otherPlayers[j].mesh)) {
-                    this.resolveSimpleCollision(otherPlayers[i].mesh, otherPlayers[j].mesh);
+                this.handleEntityCollision(otherPlayers[i].mesh, otherPlayers[j].mesh);
+            }
+        }
+    }
+
+    /**
+     * Handle entity collision using ISD-style logic adapted for two dynamic objects
+     */
+    handleEntityCollision(mesh1, mesh2) {
+        const pos1 = new THREE.Vector3();
+        const pos2 = new THREE.Vector3();
+        mesh1.getWorldPosition(pos1);
+        mesh2.getWorldPosition(pos2);
+
+        const checkDirections = [
+            new THREE.Vector3(1, 0, 0),   // Right
+            new THREE.Vector3(-1, 0, 0),  // Left
+            new THREE.Vector3(0, 1, 0),   // Up
+            new THREE.Vector3(0, -1, 0),  // Down
+            new THREE.Vector3(0, 0, 1),   // Forward
+            new THREE.Vector3(0, 0, -1),  // Back
+        ];
+
+        let minDistance1 = Infinity;
+        let minDistance2 = Infinity;
+        let closestNormal1 = new THREE.Vector3();
+        let closestNormal2 = new THREE.Vector3();
+        let needsCorrection = false;
+
+        // Check proximity from mesh1 to mesh2
+        for (const direction of checkDirections) {
+            const raycaster = new THREE.Raycaster(pos1, direction, 0, 4);
+            const intersects = raycaster.intersectObject(mesh2, true);
+
+            if (intersects.length > 0) {
+                const intersection = intersects[0];
+                if (intersection.distance < minDistance1) {
+                    minDistance1 = intersection.distance;
+                    needsCorrection = true;
+                    closestNormal1.copy(intersection.face ? intersection.face.normal : direction);
+                    if (intersection.face) {
+                        closestNormal1.transformDirection(mesh2.matrixWorld);
+                    }
+                }
+            }
+        }
+
+        // Check proximity from mesh2 to mesh1
+        for (const direction of checkDirections) {
+            const raycaster = new THREE.Raycaster(pos2, direction, 0, 4);
+            const intersects = raycaster.intersectObject(mesh1, true);
+
+            if (intersects.length > 0) {
+                const intersection = intersects[0];
+                if (intersection.distance < minDistance2) {
+                    minDistance2 = intersection.distance;
+                    needsCorrection = true;
+                    closestNormal2.copy(intersection.face ? intersection.face.normal : direction);
+                    if (intersection.face) {
+                        closestNormal2.transformDirection(mesh1.matrixWorld);
+                    }
+                }
+            }
+        }
+
+        // Apply collision correction for both entities
+        if (needsCorrection) {
+            const safeDistance = 3.0;
+            const effectiveMinDistance = Math.min(minDistance1, minDistance2);
+
+            if (effectiveMinDistance < 2.8) {
+                const correctionNeeded = safeDistance - effectiveMinDistance;
+
+                if (correctionNeeded > 0) {
+                    const interpolationFactor = 0.3;
+
+                    // Apply correction to mesh1 using closestNormal1
+                    if (minDistance1 < 2.8) {
+                        const interpolatedCorrection1 = correctionNeeded * interpolationFactor;
+                        const correctionVector1 = closestNormal1.clone().multiplyScalar(interpolatedCorrection1);
+                        mesh1.position.add(correctionVector1);
+
+                        // Reduce velocity toward surface for entity1
+                        this.applyVelocityCorrection(mesh1, closestNormal1);
+                        this.updateRigidBodyPosition(mesh1, mesh1.position);
+                    }
+
+                    // Apply correction to mesh2 using closestNormal2 (opposite direction)
+                    if (minDistance2 < 2.8) {
+                        const interpolatedCorrection2 = correctionNeeded * interpolationFactor;
+                        const correctionVector2 = closestNormal2.clone().multiplyScalar(-interpolatedCorrection2);
+                        mesh2.position.add(correctionVector2);
+
+                        // Reduce velocity toward surface for entity2
+                        this.applyVelocityCorrection(mesh2, closestNormal2);
+                        this.updateRigidBodyPosition(mesh2, mesh2.position);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Apply velocity correction to prevent phasing through collision surface
+     */
+    applyVelocityCorrection(mesh, normal) {
+        // Find the entity associated with this mesh
+        let entity = null;
+        if (this.gameState.player && this.gameState.player.ship && this.gameState.player.ship.mesh === mesh) {
+            entity = this.gameState.player;
+        } else {
+            for (const [playerId, playerObj] of Object.entries(this.gameState.otherPlayers)) {
+                if (playerObj.mesh === mesh) {
+                    entity = playerObj;
+                    break;
+                }
+            }
+            if (!entity) {
+                for (const enemy of this.gameState.enemies) {
+                    if (enemy.mesh === mesh) {
+                        entity = enemy;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (entity && entity.velocity) {
+            const normalDotVelocity = entity.velocity.dot(normal);
+            if (normalDotVelocity > 0) {
+                const velocityReduction = Math.min(normalDotVelocity * 0.3, normalDotVelocity);
+                const velocityCorrection = normal.clone().multiplyScalar(velocityReduction);
+                entity.velocity.sub(velocityCorrection);
+
+                // Update rigid body velocity if it exists
+                if (entity.ship && entity.ship.rigidBody) {
+                    entity.ship.rigidBody.setLinvel({
+                        x: entity.velocity.x,
+                        y: entity.velocity.y,
+                        z: entity.velocity.z
+                    }, true);
                 }
             }
         }
@@ -252,12 +387,36 @@ export default class CollisionManager {
                     if (destroyed) {
                         console.log(`Enemy ${enemy.id} destroyed! Starting respawn process.`);
                         enemy.startRespawn();
-                        // Don't remove from enemies array, let it respawn
                         // Send destruction message to server for networking
-                        if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                        if (isLocalBolt && window.ws && window.ws.readyState === WebSocket.OPEN) {
                             window.ws.send(JSON.stringify({
                                 type: 'enemyDestroyed',
                                 enemyId: enemy.id
+                            }));
+                        }
+                    } else if (componentId && enemy.componentHealth[componentId] <= 0) {
+                        // Component was destroyed but enemy survived
+                        console.log(`Enemy ${enemy.id} component ${componentId} destroyed locally!`);
+
+                        // Store debris creation info for shooter-side replication
+                        // We'll create debris locally AND store info for when network message arrives
+                        if (isLocalBolt && enemy.componentMeshes[componentId] && enemy.componentMeshes[componentId].length > 0) {
+                            const meshes = enemy.componentMeshes[componentId];
+
+                            // Store this info globally for network message handling (when we receive confirmation)
+                            if (!window.pendingDebrisCreations) window.pendingDebrisCreations = {};
+                            window.pendingDebrisCreations[`${enemy.id}_${componentId}`] = {
+                                enemyId: enemy.id,
+                                componentId: componentId,
+                                processed: false // Mark as not yet processed by network message
+                            };
+                        }
+
+                        if (isLocalBolt && window.ws && window.ws.readyState === WebSocket.OPEN) {
+                            window.ws.send(JSON.stringify({
+                                type: 'enemyComponentDestroyed',
+                                enemyId: enemy.id,
+                                componentId: componentId
                             }));
                         }
                     }
@@ -322,7 +481,161 @@ export default class CollisionManager {
     }
 
     /**
-     * Simple sphere-based collision check
+     * Accurate model-based collision check using bounding box and raycasting
+     */
+    accurateCollisionCheck(mesh1, mesh2) {
+        const pos1 = new THREE.Vector3();
+        const pos2 = new THREE.Vector3();
+        mesh1.getWorldPosition(pos1);
+        mesh2.getWorldPosition(pos2);
+
+        // First check if bounding boxes intersect for performance
+        const bb1 = new THREE.Box3().setFromObject(mesh1);
+        const bb2 = new THREE.Box3().setFromObject(mesh2);
+
+        if (!bb1.intersectsBox(bb2)) {
+            return { collision: false, minDistance: Infinity, normal: new THREE.Vector3() };
+        }
+
+        const checkDirections = [
+            new THREE.Vector3(1, 0, 0),   // Right
+            new THREE.Vector3(-1, 0, 0),  // Left
+            new THREE.Vector3(0, 1, 0),   // Up
+            new THREE.Vector3(0, -1, 0),  // Down
+            new THREE.Vector3(0, 0, 1),   // Forward
+            new THREE.Vector3(0, 0, -1),  // Back
+            // Add diagonal directions for better coverage
+            new THREE.Vector3(1, 1, 0).normalize(),   // Up-right
+            new THREE.Vector3(-1, 1, 0).normalize(),  // Up-left
+            new THREE.Vector3(1, -1, 0).normalize(),  // Down-right
+            new THREE.Vector3(-1, -1, 0).normalize(), // Down-left
+            new THREE.Vector3(1, 0, 1).normalize(),   // Forward-right
+            new THREE.Vector3(-1, 0, 1).normalize(),  // Forward-left
+            new THREE.Vector3(1, 0, -1).normalize(),  // Back-right
+            new THREE.Vector3(-1, 0, -1).normalize(), // Back-left
+            new THREE.Vector3(0, 1, 1).normalize(),   // Forward-up
+            new THREE.Vector3(0, -1, 1).normalize(),  // Forward-down
+            new THREE.Vector3(0, 1, -1).normalize(),  // Back-up
+            new THREE.Vector3(0, -1, -1).normalize(), // Back-down
+        ];
+
+        let minDistance = Infinity;
+        let closestNormal = new THREE.Vector3();
+        let hasCollision = false;
+
+        // Check from mesh1 to mesh2
+        for (const direction of checkDirections) {
+            const raycaster = new THREE.Raycaster(pos1, direction, 0, 5);
+            const intersects = raycaster.intersectObject(mesh2, true);
+
+            if (intersects.length > 0) {
+                const intersection = intersects[0];
+                if (intersection.distance < minDistance) {
+                    minDistance = intersection.distance;
+                    hasCollision = true;
+                    closestNormal.copy(intersection.face ? intersection.face.normal : direction);
+                    if (intersection.face) {
+                        closestNormal.transformDirection(mesh2.matrixWorld);
+                    }
+                }
+            }
+        }
+
+        // Check from mesh2 to mesh1 (reverse directions for symmetry)
+        const reverseDirections = checkDirections.map(dir => dir.clone().negate());
+        for (const direction of reverseDirections) {
+            const raycaster = new THREE.Raycaster(pos2, direction, 0, 5);
+            const intersects = raycaster.intersectObject(mesh1, true);
+
+            if (intersects.length > 0) {
+                const intersection = intersects[0];
+                if (intersection.distance < minDistance) {
+                    minDistance = intersection.distance;
+                    hasCollision = true;
+                    closestNormal.copy(intersection.face ? intersection.face.normal : direction);
+                    if (intersection.face) {
+                        closestNormal.transformDirection(mesh1.matrixWorld);
+                    }
+                    closestNormal.negate(); // Reverse because we're checking from the other side
+                }
+            }
+        }
+
+        return { collision: hasCollision, minDistance, normal: closestNormal };
+    }
+
+    /**
+     * Resolve accurate collision using model-based raycasting
+     */
+    resolveAccurateCollision(mesh1, mesh2, normal, minDistance) {
+        const safeDistance = 1.8; // Reduced for ship-to-ship collisions (ISD uses 3.0)
+
+        if (minDistance < safeDistance) {
+            const correctionNeeded = safeDistance - minDistance;
+            const interpolationFactor = 0.5; // Increased for more responsive separation
+            const interpolatedCorrection = correctionNeeded * interpolationFactor;
+            const correctionVector = normal.clone().multiplyScalar(interpolatedCorrection);
+
+            // Apply corrections
+            mesh1.position.add(correctionVector);
+            mesh2.position.sub(correctionVector);
+
+            // Update physics bodies and velocities if they exist
+            this.updateRigidBodyPositionAndVelocity(mesh1, mesh1.position, normal);
+            this.updateRigidBodyPositionAndVelocity(mesh2, mesh2.position, normal.negate());
+        }
+    }
+
+    /**
+     * Update rigid body position and velocity
+     */
+    updateRigidBodyPositionAndVelocity(mesh, position, collisionNormal) {
+        // Find the entity associated with this mesh
+        let entity = null;
+        let isPlayer = false;
+        if (this.gameState.player && this.gameState.player.ship && this.gameState.player.ship.mesh === mesh) {
+            entity = this.gameState.player;
+            isPlayer = true;
+        } else {
+            for (const [playerId, playerObj] of Object.entries(this.gameState.otherPlayers)) {
+                if (playerObj.mesh === mesh) {
+                    entity = playerObj;
+                    break;
+                }
+            }
+            if (!entity) {
+                for (const enemy of this.gameState.enemies) {
+                    if (enemy.mesh === mesh) {
+                        entity = enemy;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (entity && entity.ship && entity.ship.rigidBody) {
+            entity.ship.rigidBody.setTranslation(position, true);
+            entity.position.copy(position);
+
+            // Reduce velocity toward collision normal to prevent phasing
+            if (isPlayer && this.gameState.player.velocity) {
+                const normalDotVelocity = this.gameState.player.velocity.dot(collisionNormal);
+                if (normalDotVelocity > 0) {
+                    const velocityReduction = Math.min(normalDotVelocity * 0.7, normalDotVelocity);
+                    const velocityCorrection = collisionNormal.clone().multiplyScalar(velocityReduction);
+                    this.gameState.player.velocity.sub(velocityCorrection);
+                    entity.ship.rigidBody.setLinvel({
+                        x: this.gameState.player.velocity.x,
+                        y: this.gameState.player.velocity.y,
+                        z: this.gameState.player.velocity.z
+                    }, true);
+                }
+            }
+        }
+    }
+
+    /**
+     * Simple sphere-based collision check (kept for compatibility)
      */
     simpleSphereCollisionCheck(mesh1, mesh2) {
         const pos1 = new THREE.Vector3();
@@ -344,7 +657,7 @@ export default class CollisionManager {
     }
 
     /**
-     * Simple collision resolution
+     * Simple collision resolution (kept for compatibility)
      */
     resolveSimpleCollision(mesh1, mesh2) {
         const pos1 = new THREE.Vector3();

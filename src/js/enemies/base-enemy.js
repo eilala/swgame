@@ -204,16 +204,20 @@ export default class BaseEnemy {
                 // If component is destroyed, remove it from scene and notify other players
                 if (this.componentHealth[componentId] <= 0) {
                     console.log(`Component ${componentId} destroyed!`);
-                    this.destroyComponent(componentId);
-    
-                    // Send component destruction to server for multiplayer sync
-                    if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+
+                    // Send component destruction to server for multiplayer sync only if this is the local client
+                    // (not called from network message handler)
+                    const isLocalDamage = !componentId || !this.receivedNetworkDamage;
+                    if (isLocalDamage && window.ws && window.ws.readyState === WebSocket.OPEN) {
                         window.ws.send(JSON.stringify({
                             type: 'enemyComponentDestroyed',
                             enemyId: this.id,
                             componentId: componentId
                         }));
                     }
+
+                    // Destroy component AFTER sending network message to ensure both sides get debris
+                    this.destroyComponent(componentId);
                 }
 
                 console.log(`Component ${componentId} damaged for ${componentDamage}, remaining component health: ${this.componentHealth[componentId]}`);

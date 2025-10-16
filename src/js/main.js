@@ -683,7 +683,7 @@ function handlePlayerComponentDestruction(data) {
     console.log(`Received component destruction: playerId=${playerId}, componentId=${componentId}`);
 
     if (playerId === String(myPlayerId)) {
-        // Local player component destroyed
+        // Local player component destroyed - create debris
         console.log(`Local player component ${componentId} destroyed via network message`);
         if (player.ship.componentHealth[componentId] !== undefined) {
             player.ship.componentHealth[componentId] = 0;
@@ -691,7 +691,7 @@ function handlePlayerComponentDestruction(data) {
             console.log(`Your ${componentId} was destroyed!`);
         }
     } else {
-        // Other player component destroyed
+        // Other player component destroyed - create debris for the shooter
         const playerObj = otherPlayers[playerId];
         if (playerObj) {
             if (playerObj.componentHealth && playerObj.componentHealth[componentId] !== undefined) {
@@ -718,13 +718,28 @@ function handlePlayerComponentDestruction(data) {
 
                         collectMeshes(playerObj.mesh);
 
-                        // Remove all meshes for this component
+                        // Calculate center position for debris explosion
+                        let centerPosition = new THREE.Vector3();
+                        if (meshesToRemove.length > 0) {
+                            meshesToRemove.forEach(mesh => {
+                                centerPosition.add(mesh.position);
+                            });
+                            centerPosition.divideScalar(meshesToRemove.length);
+                        }
+   
+                        // Remove all meshes for this component and create debris
                         meshesToRemove.forEach(mesh => {
                             console.log(`Removing component ${componentId} mesh "${mesh.name}" from other player ${playerObj.nameSprite?.userData?.name || 'Player'}`);
                             if (mesh.parent) {
                                 mesh.parent.remove(mesh);
                             }
                         });
+   
+                        // Create debris explosion for the destroyed component
+                        if (debrisManager) {
+                            debrisManager.createDebrisFromComponent(meshesToRemove, centerPosition);
+                            console.log(`Component ${componentId} from other player converted to debris`);
+                        }
 
                         console.log(`Removed ${meshesToRemove.length} meshes for component ${componentId}`);
                     } catch (error) {
@@ -734,6 +749,24 @@ function handlePlayerComponentDestruction(data) {
 
                 console.log(`${playerObj.nameSprite?.userData?.name || 'Player'}'s ${componentId} was destroyed!`);
             }
+        }
+
+        // Force debris creation on the shooter's side for enemy components
+        // Since this is a component destruction message, it was likely an enemy component
+        if (componentId && enemies.length > 0) {
+            // Find any enemy that might have had this component destroyed
+            enemies.forEach(enemy => {
+                if (enemy.componentHealth && enemy.componentHealth[componentId] <= 0) {
+                    // Force debris creation if the component is already destroyed
+                    if (enemy.componentMeshes && enemy.componentMeshes[componentId] && enemy.componentMeshes[componentId].length > 0) {
+                        console.log(`Forcing debris creation on shooter side for enemy component ${componentId}`);
+                        // The component is already destroyed, but we need to create debris
+                        // Since the component meshes are already removed, we need to recreate them temporarily
+                        // This is a hack, but it should work for the debris effect
+                        enemy.destroyComponent(componentId);
+                    }
+                }
+            });
         }
     }
 }
@@ -748,12 +781,42 @@ function handleEnemyComponentDestruction(data) {
             const enemy = enemies[i];
             if (enemy.componentHealth[componentId] !== undefined) {
                 enemy.componentHealth[componentId] = 0;
+                // Mark this as network damage to prevent duplicate network messages
+                enemy.receivedNetworkDamage = true;
                 enemy.destroyComponent(componentId);
-                console.log(`Enemy ${enemyId}'s ${componentId} was destroyed!`);
+                enemy.receivedNetworkDamage = false; // Reset flag
+                console.log(`Enemy ${enemyId}'s ${componentId} was destroyed via network!`);
+            } else {
+                // Component might already be destroyed locally (shooter case)
+                // Check if we have stored debris creation info for this component
+                const debrisKey = `${enemyId}_${componentId}`;
+                if (window.pendingDebrisCreations && window.pendingDebrisCreations[debrisKey]) {
+                    const debrisInfo = window.pendingDebrisCreations[debrisKey];
+
+                    // Mark as processed to prevent double processing
+                    if (!debrisInfo.processed) {
+                        console.log(`Network confirmation received for shooter-side debris: ${debrisKey}`);
+                        debrisInfo.processed = true;
+
+                        // Since debris was already created locally, we just mark it as confirmed
+                        // Clean up stored info after a delay to prevent memory issues
+                        setTimeout(() => {
+                            if (window.pendingDebrisCreations && window.pendingDebrisCreations[debrisKey]) {
+                                delete window.pendingDebrisCreations[debrisKey];
+                            }
+                        }, 1000); // Clean up after 1 second
+                    }
+                }
             }
             break;
         }
     }
+}
+
+// Force-create debris on the shooter's side when a component is destroyed
+// This function is no longer needed as debris creation is handled directly in handleEnemyComponentDestruction
+function handleEnemyComponentDestructionForShooter(data) {
+    // Debris creation is now handled directly in handleEnemyComponentDestruction
 }
 
 function handleEnemyRespawn(enemyData) {
